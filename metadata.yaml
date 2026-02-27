@@ -1,11 +1,41 @@
 name: limit_limiter
-author: Sakura520222
-description: 限制用户每日 AI 使用次数，支持多级配置、黑白名单和独立/共享模式
+display_name: 限定酱
+author: 车厘子小樱
+description: |
+  可爱的AI使用次数管理助手✨
+  
+  核心功能：
+  - 多级配置：全局、群组、用户三级配置，优先级从高到低
+  - 黑白名单：支持用户黑名单和白名单，白名单用户无限制使用
+  - 两种模式：独立模式（用户独立计数）和共享模式（群组共享计数）
+  - 灵活管理：提供完整的指令集，支持查询、配置和管理
+  - 跨平台：支持所有主流聊天平台
+  
+  适用场景：群聊管理、资源控制、防滥用
 version: 1.0.0
 repository: https://github.com/Sakura520222/limit_limiter
 tags:
-  - limit
   - ai
+  - limit
   - management
   - admin
+  - anti-abuse
+  - rate-limit
+  - whitelist
+  - blacklist
+support_platforms:
+  - aiocqhttp
+  - qq_official
+  - telegram
+  - wecom
+  - lark
+  - dingtalk
+  - discord
+  - slack
+  - kook
+  - vocechat
+  - weixin_official_account
+  - satori
+  - misskey
+  - line
 astrbot_version: ">=4.16"

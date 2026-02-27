@@ -17,13 +17,13 @@ from astrbot.api.star import Context, Star, register
 
 @register(
     "limit_limiter",
-    "AstrBot Community",
-    "限制用户每日 AI 使用次数，支持多级配置和黑白名单",
+    "车厘子小樱",
+    "限定酱 - 可爱的AI使用次数管理助手，支持多级配置和黑白名单✨",
     "1.0.0",
-    "https://github.com/astrbot-plugins/limit_limiter",
+    "https://github.com/Sakura520222/limit_limiter",
 )
 class LimitLimiter(Star):
-    """AI 使用次数限制器"""
+    """限定酱 - AI使用次数管理助手✨"""
 
     def __init__(self, context: Context, config: AstrBotConfig = None):
         super().__init__(context)
