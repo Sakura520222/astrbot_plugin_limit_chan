@@ -1,1 +1,5 @@
 .agents/
+logs/
+run_ruff.py
+__pycache__/
+data/

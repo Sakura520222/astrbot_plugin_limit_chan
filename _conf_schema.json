@@ -1,0 +1,33 @@
+{
+  "daily_limit": {
+    "description": "全局默认每日限制次数",
+    "type": "int",
+    "default": 20,
+    "hint": "所有用户和群组的默认每日 AI 使用次数限制"
+  },
+  "mode": {
+    "description": "全局默认计数模式",
+    "type": "string",
+    "default": "individual",
+    "options": ["individual", "shared"],
+    "hint": "individual: 独立模式（每个用户独立计数）, shared: 共享模式（群组内共用计数）"
+  },
+  "enable_whitelist": {
+    "description": "启用白名单功能",
+    "type": "bool",
+    "default": true,
+    "hint": "启用后，白名单用户可无限制使用 AI 功能"
+  },
+  "enable_blacklist": {
+    "description": "启用黑名单功能",
+    "type": "bool",
+    "default": true,
+    "hint": "启用后，黑名单用户将被禁止使用 AI 功能"
+  },
+  "cleanup_days": {
+    "description": "自动清理天数",
+    "type": "int",
+    "default": 30,
+    "hint": "自动清理多少天前的使用记录（0为不清理）"
+  }
+}

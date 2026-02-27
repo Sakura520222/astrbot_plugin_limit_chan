@@ -1,0 +1,11 @@
+name: limit_limiter
+author: AstrBot Community
+description: 限制用户每日 AI 使用次数，支持多级配置、黑白名单和独立/共享模式
+version: 1.0.0
+repository: https://github.com/astrbot-plugins/limit_limiter
+tags:
+  - limit
+  - ai
+  - management
+  - admin
+astrbot_version: ">=4.16"
