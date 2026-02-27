@@ -164,7 +164,7 @@ class LimitLimiter(Star):
             )
 
             await db.commit()
-            
+
         # 标记数据库已初始化
         self._initialized = True
 
