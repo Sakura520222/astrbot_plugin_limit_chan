@@ -11,14 +11,6 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, StarTools
 
-from .commands.blacklist import BlacklistCommands
-from .commands.global_config import GlobalConfigCommand
-from .commands.group import GroupCommand
-from .commands.query import QueryCommand
-from .commands.reset import ResetCommand
-from .commands.stats import StatsCommand
-from .commands.user import UserCommand
-from .commands.whitelist import WhitelistCommands
 from .database.connection import DatabaseConnection
 from .database.models import DatabaseModels
 from .handlers.interceptors import LLMInterceptor
@@ -53,19 +45,6 @@ class LimitLimiter(Star):
             self.permission_manager,
             self.usage_manager,
         )
-
-        # 初始化命令处理器
-        self.query_command = QueryCommand(
-            self.permission_manager,
-            self.usage_manager,
-        )
-        self.group_command = GroupCommand(self.db_connection)
-        self.user_command = UserCommand(self.db_connection)
-        self.blacklist_commands = BlacklistCommands(self.db_connection)
-        self.whitelist_commands = WhitelistCommands(self.db_connection)
-        self.reset_command = ResetCommand(self.db_connection)
-        self.stats_command = StatsCommand(self.db_connection)
-        self.global_config_command = GlobalConfigCommand(self.config_manager)
 
     async def on_wakeup(self):
         """插件启动时初始化数据库"""
@@ -329,11 +308,11 @@ class LimitLimiter(Star):
         platform = str(event.platform)
 
         db = await self.db_connection.get_connection()
-        cursor = await db.execute(
+        async with db.execute(
             "DELETE FROM ai_usage WHERE (user_id = ? OR group_id = ?) AND platform = ?",
             (identity_id, identity_id, platform),
-        )
-        deleted = cursor.rowcount
+        ) as cursor:
+            deleted = cursor.rowcount
         await db.commit()
 
         if deleted > 0:
