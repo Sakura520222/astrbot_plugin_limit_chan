@@ -7,6 +7,79 @@
 
 ---
 
+## [1.1.0] - 2026-02-28
+
+### 重构
+- **命令处理器层 (commands 模块)**
+  - 新增 `commands` 模块，实现完整的命令处理器架构
+  - 所有管理功能独立为专门的命令处理器，提升代码可维护性
+  
+- **黑名单管理 (commands/blacklist.py)**
+  - 支持添加用户到黑名单：`/limit blacklist add <用户ID>`
+  - 支持从黑名单移除用户：`/limit blacklist remove <用户ID>`
+  - 支持查看黑名单列表：`/limit blacklist list`
+  - 黑名单用户将被阻止使用 AI 功能，优先级高于其他配置
+  
+- **白名单管理 (commands/whitelist.py)**
+  - 支持添加用户到白名单：`/limit whitelist add <用户ID>`
+  - 支持从白名单移除用户：`/limit whitelist remove <用户ID>`
+  - 支持查看白名单列表：`/limit whitelist list`
+  - 白名单用户可无限制使用 AI，不受计数限制
+  
+- **群组配置管理 (commands/group.py)**
+  - 支持设置群组每日限制：`/limit group <次数>`
+  - 支持设置群组计数模式：`/limit group mode <individual|shared>`
+  - 私聊场景自动使用独立模式
+  - 群聊场景可根据配置选择独立模式或共享模式
+  
+- **全局配置管理 (commands/global_config.py)**
+  - 支持设置全局每日限制：`/limit global <次数>`
+  - 支持设置全局计数模式：`/limit global mode <individual|shared>`
+  - 全局配置适用于所有未单独配置的用户/群组
+  
+- **查询功能 (commands/query.py)**
+  - 支持用户查询当前使用情况：`/limit`
+  - 支持查看已使用次数和剩余次数
+  - 支持查看当前生效的配置信息
+  - 支持查看黑白名单状态
+  
+- **重置功能 (commands/reset.py)**
+  - 支持管理员重置用户使用统计：`/limit reset user <用户ID>`
+  - 支持管理员重置群组使用统计：`/limit reset group <群组ID>`
+  - 支持管理员重置所有用户统计：`/limit reset all`
+  - 重置操作需要管理员权限
+  
+- **统计功能 (commands/stats.py)**
+  - 支持查看使用统计信息：`/limit stats`
+  - 支持查看用户使用排行
+  - 支持查看群组使用排行
+  - 支持查看总计使用次数
+  
+- **用户管理 (commands/user.py)**
+  - 支持查看用户详细信息：`/limit user <用户ID>`
+  - 支持查看用户配置、使用记录、黑白名单状态
+  - 支持设置用户专属配置：`/limit user <用户ID> <次数>`
+  - 用户配置优先级高于群组和全局配置
+
+### 优化
+- **代码架构优化**
+  - 引入命令处理器层，实现职责分离
+  - 每个功能模块独立为单独的命令处理器
+  - 提升代码可维护性和可扩展性
+  - 便于后续添加新的命令功能
+
+- **权限管理增强**
+  - 统一的权限验证机制
+  - 所有管理命令需要管理员权限
+  - 完善的权限错误提示
+
+- **代码组织优化**
+  - `commands/` 目录存放所有命令处理器
+  - 每个命令处理器职责单一，易于测试
+  - 清晰的模块划分和依赖关系
+
+---
+
 ## 版本说明
 
 版本号格式：`主版本号.次版本号.修订号`
