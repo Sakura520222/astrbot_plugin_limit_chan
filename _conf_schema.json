@@ -12,16 +12,28 @@
     "options": ["individual", "shared"],
     "hint": "individual: 独立模式（每个用户独立计数）, shared: 共享模式（群组内共用计数）"
   },
-  "enable_whitelist": {
-    "description": "启用白名单功能",
-    "type": "bool",
-    "default": true,
-    "hint": "启用后，白名单用户可无限制使用 AI 功能"
+  "blacklist": {
+    "description": "黑名单配置",
+    "type": "object",
+    "default": {},
+    "hint": "按平台配置黑名单用户，格式：{\"qq\": [\"用户ID1\", \"用户ID2\"]}"
   },
-  "enable_blacklist": {
-    "description": "启用黑名单功能",
-    "type": "bool",
-    "default": true,
-    "hint": "启用后，黑名单用户将被禁止使用 AI 功能"
+  "whitelist": {
+    "description": "白名单配置",
+    "type": "object",
+    "default": {},
+    "hint": "按平台配置白名单用户，格式：{\"qq\": [\"用户ID1\", \"用户ID2\"]}"
+  },
+  "user_configs": {
+    "description": "用户特定配置",
+    "type": "object",
+    "default": {},
+    "hint": "按平台配置用户限制，格式：{\"qq\": {\"用户ID\": {\"daily_limit\": 10}}}"
+  },
+  "group_configs": {
+    "description": "群组特定配置",
+    "type": "object",
+    "default": {},
+    "hint": "按平台配置群组限制，格式：{\"qq\": {\"群组ID\": {\"daily_limit\": 30, \"mode\": \"shared\"}}}"
   }
 }

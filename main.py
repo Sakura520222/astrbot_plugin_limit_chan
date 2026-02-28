@@ -54,8 +54,56 @@ class LimitLimiter(Star):
         )
 
     async def on_wakeup(self):
-        """插件启动时初始化数据库"""
-        await self.db_models.init_db()
+        """插件启动时初始化数据库并自动迁移配置"""
+        migrated_config = await self.db_models.init_db()
+        
+        # 如果有旧配置被迁移，自动合并到当前配置
+        if migrated_config and any(migrated_config.values()):
+            logger.info("检测到旧配置，已自动迁移。建议通过 AstrBot 管理界面保存配置以持久化迁移的数据。")
+            
+            # 合并迁移的配置到当前配置
+            if not self.config:
+                self.config = {}
+            
+            # 合并黑名单
+            if migrated_config["blacklist"]:
+                if "blacklist" not in self.config:
+                    self.config["blacklist"] = {}
+                for platform, users in migrated_config["blacklist"].items():
+                    if platform not in self.config["blacklist"]:
+                        self.config["blacklist"][platform] = []
+                    self.config["blacklist"][platform].extend(users)
+                    # 去重
+                    self.config["blacklist"][platform] = list(set(self.config["blacklist"][platform]))
+            
+            # 合并白名单
+            if migrated_config["whitelist"]:
+                if "whitelist" not in self.config:
+                    self.config["whitelist"] = {}
+                for platform, users in migrated_config["whitelist"].items():
+                    if platform not in self.config["whitelist"]:
+                        self.config["whitelist"][platform] = []
+                    self.config["whitelist"][platform].extend(users)
+                    # 去重
+                    self.config["whitelist"][platform] = list(set(self.config["whitelist"][platform]))
+            
+            # 合并用户配置
+            if migrated_config["user_configs"]:
+                if "user_configs" not in self.config:
+                    self.config["user_configs"] = {}
+                for platform, users in migrated_config["user_configs"].items():
+                    if platform not in self.config["user_configs"]:
+                        self.config["user_configs"][platform] = {}
+                    self.config["user_configs"][platform].update(users)
+            
+            # 合并群组配置
+            if migrated_config["group_configs"]:
+                if "group_configs" not in self.config:
+                    self.config["group_configs"] = {}
+                for platform, groups in migrated_config["group_configs"].items():
+                    if platform not in self.config["group_configs"]:
+                        self.config["group_configs"][platform] = {}
+                    self.config["group_configs"][platform].update(groups)
 
     async def cog_unload(self):
         """插件卸载时清理资源"""
@@ -132,20 +180,17 @@ class LimitLimiter(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_clear_db")
     async def limit_clear_db(self, event: AstrMessageEvent):
-        """一键清空数据库"""
+        """一键清空使用记录"""
         user_id = event.get_sender_id()
         platform = str(event.platform)
 
         # 发送警告信息
         warning_msg = (
-            "⚠️ 警告：此操作将完全清空数据库！\n\n"
+            "⚠️ 警告：此操作将清空所有使用记录！\n\n"
             "这将删除：\n"
-            "- 黑名单和白名单\n"
-            "- 所有群组和用户配置\n"
-            "- 所有使用记录\n\n"
-            "清空后将恢复默认配置：\n"
-            "- 每日限制：20 次\n"
-            "- 模式：individual（独立模式）\n\n"
+            "- 所有 AI 使用记录\n\n"
+            "注意：黑名单、白名单、用户/群组配置已移至配置文件，不受此操作影响。\n"
+            "如需修改配置，请通过 AstrBot 管理界面编辑配置文件。\n\n"
             "请在 30 秒内发送「确认」以继续操作\n"
             "发送其他内容将取消操作"
         )
@@ -168,44 +213,23 @@ class LimitLimiter(Star):
             try:
                 db = await self.db_connection.get_connection()
 
-                # 删除所有表的数据
-                await db.execute("DELETE FROM blacklist")
-                await db.execute("DELETE FROM whitelist")
-                await db.execute("DELETE FROM group_config")
-                await db.execute("DELETE FROM user_config")
+                # 仅删除使用记录
                 await db.execute("DELETE FROM ai_usage")
-                await db.execute("DELETE FROM global_config")
-
-                # 恢复默认全局配置
-                await db.execute(
-                    """
-                    INSERT INTO global_config (key, value)
-                    VALUES ('daily_limit', '20')
-                """
-                )
-                await db.execute(
-                    """
-                    INSERT INTO global_config (key, value)
-                    VALUES ('mode', 'individual')
-                """
-                )
-
                 await db.commit()
 
-                # 清除所有缓存
-                await self.config_manager.cache.clear_all()
+                # 清除使用计数缓存
                 await self.usage_manager.count_cache.clear_all()
 
                 # 记录日志
                 logger.info(
-                    f"数据库已清空 - 操作者: {user_id} ({platform}), 时间: {datetime.now()}"
+                    f"使用记录已清空 - 操作者: {user_id} ({platform}), 时间: {datetime.now()}"
                 )
 
-                await event.send(event.plain_result("✅ 数据库已完全清空完成！"))
+                await event.send(event.plain_result("✅ 使用记录已清空完成！"))
                 controller.stop()
 
             except Exception as e:
-                logger.error(f"清空数据库失败: {e}", exc_info=True)
+                logger.error(f"清空失败: {e}", exc_info=True)
                 await event.send(event.plain_result(f"❌ 清空失败: {str(e)}"))
                 controller.stop()
 
@@ -227,215 +251,144 @@ class LimitLimiter(Star):
     async def limit_group(
         self,
         event: AstrMessageEvent,
-        group_id: str,
-        limit: int,
-        mode: str = "individual",
+        group_id: str = None,
+        limit: int = None,
+        mode: str = None,
     ):
-        """设置群组配置"""
-        platform = str(event.platform)
-
-        if mode not in ["individual", "shared"]:
-            yield event.plain_result("❌ 模式必须是 individual 或 shared")
-            return
-
-        # 校验 limit 值：-1 表示无限制，>=0 表示具体次数
-        if limit < -1:
-            yield event.plain_result("❌ 限制次数不能小于 -1（-1 表示无限制）")
-            return
-
-        try:
-            db = await self.db_connection.get_connection()
-            await db.execute(
-                """
-                INSERT OR REPLACE INTO group_config
-                (group_id, platform, daily_limit, mode, enabled)
-                VALUES (?, ?, ?, ?, 1)
-            """,
-                (group_id, platform, limit, mode),
-            )
-            await db.commit()
-
-            # 清除相关缓存
-            await self.config_manager.invalidate_group_cache(group_id, platform)
-
-            yield event.plain_result(
-                f"✅ 群组 {group_id} 配置已更新\n限制: {limit} 次/天\n模式: {mode}"
-            )
-        except Exception as e:
-            logger.error(
-                f"设置群组配置失败: group_id={group_id}, error={e}", exc_info=True
-            )
-            yield event.plain_result("❌ 设置失败，请稍后重试")
+        """设置群组配置（已迁移至配置文件）"""
+        yield event.plain_result(
+            "⚠️ 群组配置已迁移至配置文件\n\n"
+            "请通过 AstrBot 管理界面编辑插件配置：\n"
+            "在 group_configs 中添加配置，格式如下：\n"
+            "```\n"
+            '"group_configs": {\n'
+            '  "qq": {\n'
+            '    "群组ID": {\n'
+            '      "daily_limit": 30,\n'
+            '      "mode": "shared"\n'
+            '    }\n'
+            "  }\n"
+            "}\n"
+            "```\n\n"
+            "参数说明：\n"
+            "- daily_limit: 每日限制次数（-1表示无限制）\n"
+            "- mode: individual（独立模式）或 shared（共享模式）"
+        )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_user")
-    async def limit_user(self, event: AstrMessageEvent, user_id: str, limit: int):
-        """设置用户配置"""
-        platform = str(event.platform)
-
-        # 校验 limit 值：-1 表示无限制，>=0 表示具体次数
-        if limit < -1:
-            yield event.plain_result("❌ 限制次数不能小于 -1（-1 表示无限制）")
-            return
-
-        try:
-            db = await self.db_connection.get_connection()
-            await db.execute(
-                """
-                INSERT OR REPLACE INTO user_config
-                (user_id, platform, daily_limit, enabled)
-                VALUES (?, ?, ?, 1)
-            """,
-                (user_id, platform, limit),
-            )
-            await db.commit()
-
-            # 清除相关缓存
-            await self.config_manager.invalidate_user_cache(user_id, platform)
-
-            yield event.plain_result(
-                f"✅ 用户 {user_id} 配置已更新\n限制: {limit} 次/天(独立模式)"
-            )
-        except Exception as e:
-            logger.error(
-                f"设置用户配置失败: user_id={user_id}, error={e}", exc_info=True
-            )
-            yield event.plain_result("❌ 设置失败，请稍后重试")
+    async def limit_user(self, event: AstrMessageEvent, user_id: str = None, limit: int = None):
+        """设置用户配置（已迁移至配置文件）"""
+        yield event.plain_result(
+            "⚠️ 用户配置已迁移至配置文件\n\n"
+            "请通过 AstrBot 管理界面编辑插件配置：\n"
+            "在 user_configs 中添加配置，格式如下：\n"
+            "```\n"
+            '"user_configs": {\n'
+            '  "qq": {\n'
+            '    "用户ID": {\n'
+            '      "daily_limit": 10\n'
+            '    }\n'
+            "  }\n"
+            "}\n"
+            "```\n\n"
+            "参数说明：\n"
+            "- daily_limit: 每日限制次数（-1表示无限制）"
+        )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_blacklist_add")
-    async def blacklist_add(
-        self, event: AstrMessageEvent, user_id: str, reason: str = ""
-    ):
-        """添加黑名单"""
-        platform = str(event.platform)
-        now = int(datetime.now().timestamp())
-
-        db = await self.db_connection.get_connection()
-        await db.execute(
-            """
-            INSERT OR REPLACE INTO blacklist
-            (user_id, platform, add_time, reason)
-            VALUES (?, ?, ?, ?)
-        """,
-            (user_id, platform, now, reason),
+    async def blacklist_add(self, event: AstrMessageEvent, user_id: str = None, reason: str = ""):
+        """添加黑名单（已迁移至配置文件）"""
+        yield event.plain_result(
+            "⚠️ 黑名单已迁移至配置文件\n\n"
+            "请通过 AstrBot 管理界面编辑插件配置：\n"
+            "在 blacklist 中添加用户，格式如下：\n"
+            "```\n"
+            '"blacklist": {\n'
+            '  "qq": ["用户ID1", "用户ID2"]\n'
+            "}\n"
+            "```\n\n"
+            "配置后插件会自动从配置文件读取黑名单"
         )
-        await db.commit()
-
-        # 清除相关缓存
-        await self.config_manager.invalidate_user_cache(user_id, platform)
-
-        yield event.plain_result(f"✅ 用户 {user_id} 已添加到黑名单")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_blacklist_remove")
-    async def blacklist_remove(self, event: AstrMessageEvent, user_id: str):
-        """移除黑名单"""
-        platform = str(event.platform)
-
-        db = await self.db_connection.get_connection()
-        await db.execute(
-            "DELETE FROM blacklist WHERE user_id = ? AND platform = ?",
-            (user_id, platform),
+    async def blacklist_remove(self, event: AstrMessageEvent, user_id: str = None):
+        """移除黑名单（已迁移至配置文件）"""
+        yield event.plain_result(
+            "⚠️ 黑名单已迁移至配置文件\n\n"
+            "请通过 AstrBot 管理界面编辑插件配置：\n"
+            "从 blacklist 中删除对应用户ID即可"
         )
-        await db.commit()
-
-        # 清除相关缓存
-        await self.config_manager.invalidate_user_cache(user_id, platform)
-
-        yield event.plain_result(f"✅ 用户 {user_id} 已从黑名单移除")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_blacklist_list")
     async def blacklist_list(self, event: AstrMessageEvent):
-        """查看黑名单"""
+        """查看黑名单（从配置文件读取）"""
         platform = str(event.platform)
+        blacklist = self.config.get("blacklist", {}).get(platform, [])
 
-        db = await self.db_connection.get_connection()
-        async with db.execute(
-            "SELECT user_id, reason FROM blacklist WHERE platform = ?", (platform,)
-        ) as cursor:
-            rows = await cursor.fetchall()
-
-        if not rows:
+        if not blacklist:
             yield event.plain_result("📋 黑名单为空")
             return
 
-        result = "📋 黑名单列表\n━━━━━━━━━━━━━\n"
+        result = f"📋 {platform} 平台黑名单列表\n━━━━━━━━━━━━━\n"
         # 限制显示条数,避免消息过长
         max_display = 20
-        for i, (user_id, reason) in enumerate(rows[:max_display], 1):
-            result += f"{i}. {user_id}"
-            if reason:
-                result += f" ({reason})"
-            result += "\n"
+        for i, user_id in enumerate(blacklist[:max_display], 1):
+            result += f"{i}. {user_id}\n"
 
-        if len(rows) > max_display:
-            result += f"\n... 还有 {len(rows) - max_display} 条记录未显示"
+        if len(blacklist) > max_display:
+            result += f"\n... 还有 {len(blacklist) - max_display} 条记录未显示"
 
         yield event.plain_result(result)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_whitelist_add")
-    async def whitelist_add(self, event: AstrMessageEvent, user_id: str):
-        """添加白名单"""
-        platform = str(event.platform)
-        now = int(datetime.now().timestamp())
-
-        db = await self.db_connection.get_connection()
-        await db.execute(
-            "INSERT OR IGNORE INTO whitelist (user_id, platform, add_time) VALUES (?, ?, ?)",
-            (user_id, platform, now),
+    async def whitelist_add(self, event: AstrMessageEvent, user_id: str = None):
+        """添加白名单（已迁移至配置文件）"""
+        yield event.plain_result(
+            "⚠️ 白名单已迁移至配置文件\n\n"
+            "请通过 AstrBot 管理界面编辑插件配置：\n"
+            "在 whitelist 中添加用户，格式如下：\n"
+            "```\n"
+            '"whitelist": {\n'
+            '  "qq": ["用户ID1", "用户ID2"]\n'
+            "}\n"
+            "```\n\n"
+            "白名单用户可无限制使用 AI 功能"
         )
-        await db.commit()
-
-        # 清除相关缓存
-        await self.config_manager.invalidate_user_cache(user_id, platform)
-
-        yield event.plain_result(f"✅ 用户 {user_id} 已添加到白名单")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_whitelist_remove")
-    async def whitelist_remove(self, event: AstrMessageEvent, user_id: str):
-        """移除白名单"""
-        platform = str(event.platform)
-
-        db = await self.db_connection.get_connection()
-        await db.execute(
-            "DELETE FROM whitelist WHERE user_id = ? AND platform = ?",
-            (user_id, platform),
+    async def whitelist_remove(self, event: AstrMessageEvent, user_id: str = None):
+        """移除白名单（已迁移至配置文件）"""
+        yield event.plain_result(
+            "⚠️ 白名单已迁移至配置文件\n\n"
+            "请通过 AstrBot 管理界面编辑插件配置：\n"
+            "从 whitelist 中删除对应用户ID即可"
         )
-        await db.commit()
-
-        # 清除相关缓存
-        await self.config_manager.invalidate_user_cache(user_id, platform)
-
-        yield event.plain_result(f"✅ 用户 {user_id} 已从白名单移除")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_whitelist_list")
     async def whitelist_list(self, event: AstrMessageEvent):
-        """查看白名单"""
+        """查看白名单（从配置文件读取）"""
         platform = str(event.platform)
+        whitelist = self.config.get("whitelist", {}).get(platform, [])
 
-        db = await self.db_connection.get_connection()
-        async with db.execute(
-            "SELECT user_id FROM whitelist WHERE platform = ?", (platform,)
-        ) as cursor:
-            rows = await cursor.fetchall()
-
-        if not rows:
+        if not whitelist:
             yield event.plain_result("📋 白名单为空")
             return
 
-        result = "📋 白名单列表\n━━━━━━━━━━━━━\n"
+        result = f"📋 {platform} 平台白名单列表\n━━━━━━━━━━━━━\n"
         # 限制显示条数,避免消息过长
         max_display = 20
-        for i, (user_id,) in enumerate(rows[:max_display], 1):
+        for i, user_id in enumerate(whitelist[:max_display], 1):
             result += f"{i}. {user_id}\n"
 
-        if len(rows) > max_display:
-            result += f"\n... 还有 {len(rows) - max_display} 条记录未显示"
+        if len(whitelist) > max_display:
+            result += f"\n... 还有 {len(whitelist) - max_display} 条记录未显示"
 
         yield event.plain_result(result)
 
