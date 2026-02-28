@@ -5,168 +5,168 @@ AstrBot AI 使用次数限制插件
 
 import asyncio
 from datetime import date, datetime
-from pathlib import Path
 from typing import Any
 
 import aiosqlite
 
 from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.star import Context, Star, register
+from astrbot.api.star import Context, Star, StarTools
 
 
-@register(
-    "astrbot_plugin_limit_chan",
-    "车厘子小樱",
-    "限定酱 - 可爱的AI使用次数管理助手，支持多级配置和黑白名单✨",
-    "1.0.1",
-    "https://github.com/Sakura520222/astrbot_plugin_limit_chan",
-)
 class LimitLimiter(Star):
     """限定酱 - AI使用次数管理助手✨"""
 
     def __init__(self, context: Context, config: AstrBotConfig = None):
         super().__init__(context)
         self.config = config or {}
-        # 使用插件目录下的 data 子目录存储数据
-        self.data_dir = Path(__file__).parent / "data"
+        # 使用 StarTools 获取规范的持久化目录
+        self.data_dir = StarTools.get_data_dir("astrbot_plugin_limit_chan")
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.data_dir / "astrbot_plugin_limit_chan.db"
-        self._init_lock = asyncio.Lock()
-        self._initialized = False
+        # 数据库连接复用
+        self._db_connection = None
+        self._db_lock = asyncio.Lock()
+        self.background_tasks = set()  # 保存后台任务引用
 
     async def on_wakeup(self):
-        """插件启动时初始化数据库"""
-        async with self._init_lock:
-            await self.init_db()
+        """插件启动时初始化数据库连接"""
+        async with self._db_lock:
+            if self._db_connection is None:
+                self._db_connection = await aiosqlite.connect(self.db_path)
+                await self.init_db(self._db_connection)
 
-    async def _ensure_initialized(self):
-        """确保数据库已初始化"""
-        if not self._initialized:
-            async with self._init_lock:
-                if not self._initialized:
-                    await self.init_db()
+    async def cog_unload(self):
+        """插件卸载时关闭数据库连接"""
+        async with self._db_lock:
+            if self._db_connection:
+                await self._db_connection.close()
+                self._db_connection = None
+            # 等待所有后台任务完成
+            if self.background_tasks:
+                for task in list(self.background_tasks):
+                    task.cancel()
+                await asyncio.gather(*self.background_tasks, return_exceptions=True)
+                self.background_tasks.clear()
 
     async def get_db_connection(self):
-        """获取安全的数据库连接，确保数据库已初始化"""
-        await self._ensure_initialized()
-        return await aiosqlite.connect(self.db_path)
+        """获取数据库连接(复用)"""
+        if self._db_connection is None:
+            async with self._db_lock:
+                if self._db_connection is None:
+                    self._db_connection = await aiosqlite.connect(self.db_path)
+                    await self.init_db(self._db_connection)
+        return self._db_connection
 
-    async def init_db(self):
+    async def init_db(self, db):
         """初始化数据库表结构"""
         # 确保 data 目录存在
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        async with aiosqlite.connect(self.db_path) as db:
-            # 启用 WAL 模式以提高并发性能
-            await db.execute("PRAGMA journal_mode=WAL")
-            await db.execute("PRAGMA synchronous=NORMAL")
+        # 启用 WAL 模式以提高并发性能
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("PRAGMA synchronous=NORMAL")
 
-            # 全局配置表
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS global_config (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                )
-            """)
-
-            # 群组配置表
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS group_config (
-                    group_id TEXT NOT NULL,
-                    platform TEXT NOT NULL,
-                    daily_limit INTEGER NOT NULL,
-                    mode TEXT NOT NULL DEFAULT 'individual',
-                    enabled INTEGER DEFAULT 1,
-                    PRIMARY KEY (group_id, platform)
-                )
-            """)
-
-            # 用户配置表
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS user_config (
-                    user_id TEXT NOT NULL,
-                    platform TEXT NOT NULL,
-                    daily_limit INTEGER NOT NULL,
-                    enabled INTEGER DEFAULT 1,
-                    PRIMARY KEY (user_id, platform)
-                )
-            """)
-
-            # 黑名单表
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS blacklist (
-                    user_id TEXT NOT NULL,
-                    platform TEXT NOT NULL,
-                    add_time INTEGER NOT NULL,
-                    reason TEXT DEFAULT '',
-                    PRIMARY KEY (user_id, platform)
-                )
-            """)
-
-            # 白名单表
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS whitelist (
-                    user_id TEXT NOT NULL,
-                    platform TEXT NOT NULL,
-                    add_time INTEGER NOT NULL,
-                    PRIMARY KEY (user_id, platform)
-                )
-            """)
-
-            # 使用记录表
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS ai_usage (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    identity_id TEXT NOT NULL,
-                    identity_type TEXT NOT NULL,
-                    platform TEXT NOT NULL,
-                    group_id TEXT DEFAULT '',
-                    user_id TEXT NOT NULL,
-                    use_date DATE NOT NULL,
-                    use_count INTEGER DEFAULT 0,
-                    last_use_time INTEGER,
-                    UNIQUE(identity_id, identity_type, platform, group_id, use_date)
-                )
-            """)
-
-            # 创建索引
-            await db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_identity_usage
-                ON ai_usage(identity_id, identity_type, use_date)
-            """)
-
-            await db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_user_usage
-                ON ai_usage(user_id, platform, use_date)
-            """)
-
-            # 从配置文件初始化全局默认配置
-            daily_limit = self.config.get("daily_limit", 20) if self.config else 20
-            mode = (
-                self.config.get("mode", "individual") if self.config else "individual"
+        # 全局配置表
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS global_config (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             )
+        """)
 
-            await db.execute(
-                """
-                INSERT OR IGNORE INTO global_config (key, value)
-                VALUES ('daily_limit', ?)
-            """,
-                (str(daily_limit),),
+        # 群组配置表
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS group_config (
+                group_id TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                daily_limit INTEGER NOT NULL,
+                mode TEXT NOT NULL DEFAULT 'individual',
+                enabled INTEGER DEFAULT 1,
+                PRIMARY KEY (group_id, platform)
             )
+        """)
 
-            await db.execute(
-                """
-                INSERT OR IGNORE INTO global_config (key, value)
-                VALUES ('mode', ?)
-            """,
-                (mode,),
+        # 用户配置表
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_config (
+                user_id TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                daily_limit INTEGER NOT NULL,
+                enabled INTEGER DEFAULT 1,
+                PRIMARY KEY (user_id, platform)
             )
+        """)
 
-            await db.commit()
+        # 黑名单表
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS blacklist (
+                user_id TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                add_time INTEGER NOT NULL,
+                reason TEXT DEFAULT '',
+                PRIMARY KEY (user_id, platform)
+            )
+        """)
 
-        # 标记数据库已初始化
-        self._initialized = True
+        # 白名单表
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS whitelist (
+                user_id TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                add_time INTEGER NOT NULL,
+                PRIMARY KEY (user_id, platform)
+            )
+        """)
+
+        # 使用记录表
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS ai_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                identity_id TEXT NOT NULL,
+                identity_type TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                group_id TEXT DEFAULT '',
+                user_id TEXT NOT NULL,
+                use_date DATE NOT NULL,
+                use_count INTEGER DEFAULT 0,
+                last_use_time INTEGER,
+                UNIQUE(identity_id, identity_type, platform, group_id, use_date)
+            )
+        """)
+
+        # 创建索引
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_identity_usage
+            ON ai_usage(identity_id, identity_type, use_date)
+        """)
+
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_user_usage
+            ON ai_usage(user_id, platform, use_date)
+        """)
+
+        # 从配置文件初始化全局默认配置
+        daily_limit = self.config.get("daily_limit", 20) if self.config else 20
+        mode = self.config.get("mode", "individual") if self.config else "individual"
+
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO global_config (key, value)
+            VALUES ('daily_limit', ?)
+        """,
+            (str(daily_limit),),
+        )
+
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO global_config (key, value)
+            VALUES ('mode', ?)
+        """,
+            (mode,),
+        )
+
+        await db.commit()
 
     # ==================== 配置查询方法 ====================
 
@@ -177,25 +177,23 @@ class LimitLimiter(Star):
             return self.config[key]
 
         # 从数据库读取
-        await self._ensure_initialized()
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                "SELECT value FROM global_config WHERE key = ?", (key,)
-            ) as cursor:
-                row = await cursor.fetchone()
-                if row:
-                    return row[0]
-                return default
+        db = await self.get_db_connection()
+        async with db.execute(
+            "SELECT value FROM global_config WHERE key = ?", (key,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return row[0]
+            return default
 
     async def set_global_config(self, key: str, value: str):
         """设置全局配置"""
-        await self._ensure_initialized()
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                "INSERT OR REPLACE INTO global_config (key, value) VALUES (?, ?)",
-                (key, str(value)),
-            )
-            await db.commit()
+        db = await self.get_db_connection()
+        await db.execute(
+            "INSERT OR REPLACE INTO global_config (key, value) VALUES (?, ?)",
+            (key, str(value)),
+        )
+        await db.commit()
 
     async def is_blacklisted(self, user_id: str, platform: str) -> bool:
         """检查是否在黑名单"""
@@ -203,13 +201,12 @@ class LimitLimiter(Star):
         if self.config and not self.config.get("enable_blacklist", True):
             return False
 
-        await self._ensure_initialized()
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                "SELECT 1 FROM blacklist WHERE user_id = ? AND platform = ?",
-                (user_id, platform),
-            ) as cursor:
-                return await cursor.fetchone() is not None
+        db = await self.get_db_connection()
+        async with db.execute(
+            "SELECT 1 FROM blacklist WHERE user_id = ? AND platform = ?",
+            (user_id, platform),
+        ) as cursor:
+            return await cursor.fetchone() is not None
 
     async def is_whitelisted(self, user_id: str, platform: str) -> bool:
         """检查是否在白名单"""
@@ -217,45 +214,42 @@ class LimitLimiter(Star):
         if self.config and not self.config.get("enable_whitelist", True):
             return False
 
-        await self._ensure_initialized()
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                "SELECT 1 FROM whitelist WHERE user_id = ? AND platform = ?",
-                (user_id, platform),
-            ) as cursor:
-                return await cursor.fetchone() is not None
+        db = await self.get_db_connection()
+        async with db.execute(
+            "SELECT 1 FROM whitelist WHERE user_id = ? AND platform = ?",
+            (user_id, platform),
+        ) as cursor:
+            return await cursor.fetchone() is not None
 
     async def get_user_config(
         self, user_id: str, platform: str
     ) -> dict[str, Any] | None:
         """获取用户配置"""
-        await self._ensure_initialized()
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                """SELECT daily_limit, enabled FROM user_config
-                   WHERE user_id = ? AND platform = ?""",
-                (user_id, platform),
-            ) as cursor:
-                row = await cursor.fetchone()
-                if row:
-                    return {"daily_limit": row[0], "enabled": row[1]}
-                return None
+        db = await self.get_db_connection()
+        async with db.execute(
+            """SELECT daily_limit, enabled FROM user_config
+               WHERE user_id = ? AND platform = ?""",
+            (user_id, platform),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return {"daily_limit": row[0], "enabled": row[1]}
+            return None
 
     async def get_group_config(
         self, group_id: str, platform: str
     ) -> dict[str, Any] | None:
         """获取群组配置"""
-        await self._ensure_initialized()
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                """SELECT daily_limit, mode, enabled FROM group_config
-                   WHERE group_id = ? AND platform = ?""",
-                (group_id, platform),
-            ) as cursor:
-                row = await cursor.fetchone()
-                if row:
-                    return {"daily_limit": row[0], "mode": row[1], "enabled": row[2]}
-                return None
+        db = await self.get_db_connection()
+        async with db.execute(
+            """SELECT daily_limit, mode, enabled FROM group_config
+               WHERE group_id = ? AND platform = ?""",
+            (group_id, platform),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return {"daily_limit": row[0], "mode": row[1], "enabled": row[2]}
+            return None
 
     # ==================== 权限检查核心逻辑 ====================
 
@@ -302,16 +296,15 @@ class LimitLimiter(Star):
     ) -> int:
         """获取使用次数"""
         today = date.today()
-        await self._ensure_initialized()
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                """SELECT use_count FROM ai_usage
-                   WHERE identity_id = ? AND identity_type = ?
-                   AND platform = ? AND group_id = ? AND use_date = ?""",
-                (identity_id, identity_type, platform, group_id, str(today)),
-            ) as cursor:
-                row = await cursor.fetchone()
-                return row[0] if row else 0
+        db = await self.get_db_connection()
+        async with db.execute(
+            """SELECT use_count FROM ai_usage
+               WHERE identity_id = ? AND identity_type = ?
+               AND platform = ? AND group_id = ? AND use_date = ?""",
+            (identity_id, identity_type, platform, group_id, str(today)),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
 
     async def increment_usage(
         self,
@@ -325,29 +318,28 @@ class LimitLimiter(Star):
         today = date.today()
         now = int(datetime.now().timestamp())
 
-        await self._ensure_initialized()
-        async with aiosqlite.connect(self.db_path) as db:
-            # 使用 UPSERT 语法保证原子性
-            await db.execute(
-                """
-                INSERT INTO ai_usage
-                (identity_id, identity_type, platform, group_id, user_id, use_date, use_count, last_use_time)
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?)
-                ON CONFLICT(identity_id, identity_type, platform, group_id, use_date)
-                DO UPDATE SET use_count = use_count + 1, last_use_time = ?
-            """,
-                (
-                    identity_id,
-                    identity_type,
-                    platform,
-                    group_id,
-                    user_id,
-                    str(today),
-                    now,
-                    now,
-                ),
-            )
-            await db.commit()
+        db = await self.get_db_connection()
+        # 使用 UPSERT 语法保证原子性
+        await db.execute(
+            """
+            INSERT INTO ai_usage
+            (identity_id, identity_type, platform, group_id, user_id, use_date, use_count, last_use_time)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+            ON CONFLICT(identity_id, identity_type, platform, group_id, use_date)
+            DO UPDATE SET use_count = use_count + 1, last_use_time = ?
+        """,
+            (
+                identity_id,
+                identity_type,
+                platform,
+                group_id,
+                user_id,
+                str(today),
+                now,
+                now,
+            ),
+        )
+        await db.commit()
 
     # ==================== 核心拦截逻辑 ====================
 
@@ -401,12 +393,14 @@ class LimitLimiter(Star):
             )
             return
 
-        # 异步更新计数（不阻塞请求）
-        asyncio.create_task(
+        # 异步更新计数（不阻塞请求，保存任务引用）
+        task = asyncio.create_task(
             self.increment_usage(
                 identity_id, identity_type, platform, group_id, user_id
             )
         )
+        self.background_tasks.add(task)
+        task.add_done_callback(self.background_tasks.discard)
 
     # ==================== 查询指令 ====================
 
@@ -477,16 +471,16 @@ class LimitLimiter(Star):
             yield event.plain_result("❌ 模式必须是 individual 或 shared")
             return
 
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                """
-                INSERT OR REPLACE INTO group_config
-                (group_id, platform, daily_limit, mode, enabled)
-                VALUES (?, ?, ?, ?, 1)
-            """,
-                (group_id, platform, limit, mode),
-            )
-            await db.commit()
+        db = await self.get_db_connection()
+        await db.execute(
+            """
+            INSERT OR REPLACE INTO group_config
+            (group_id, platform, daily_limit, mode, enabled)
+            VALUES (?, ?, ?, ?, 1)
+        """,
+            (group_id, platform, limit, mode),
+        )
+        await db.commit()
 
         yield event.plain_result(
             f"✅ 群组 {group_id} 配置已更新\n限制: {limit} 次/天\n模式: {mode}"
@@ -498,16 +492,16 @@ class LimitLimiter(Star):
         """设置用户配置 /limit_user <用户ID> <limit>"""
         platform = str(event.platform)
 
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                """
-                INSERT OR REPLACE INTO user_config
-                (user_id, platform, daily_limit, enabled)
-                VALUES (?, ?, ?, 1)
-            """,
-                (user_id, platform, limit),
-            )
-            await db.commit()
+        db = await self.get_db_connection()
+        await db.execute(
+            """
+            INSERT OR REPLACE INTO user_config
+            (user_id, platform, daily_limit, enabled)
+            VALUES (?, ?, ?, 1)
+        """,
+            (user_id, platform, limit),
+        )
+        await db.commit()
 
         yield event.plain_result(
             f"✅ 用户 {user_id} 配置已更新\n限制: {limit} 次/天（独立模式）"
@@ -522,16 +516,16 @@ class LimitLimiter(Star):
         platform = str(event.platform)
         now = int(datetime.now().timestamp())
 
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                """
-                INSERT OR REPLACE INTO blacklist
-                (user_id, platform, add_time, reason)
-                VALUES (?, ?, ?, ?)
-            """,
-                (user_id, platform, now, reason),
-            )
-            await db.commit()
+        db = await self.get_db_connection()
+        await db.execute(
+            """
+            INSERT OR REPLACE INTO blacklist
+            (user_id, platform, add_time, reason)
+            VALUES (?, ?, ?, ?)
+        """,
+            (user_id, platform, now, reason),
+        )
+        await db.commit()
 
         yield event.plain_result(f"✅ 用户 {user_id} 已添加到黑名单")
 
@@ -541,12 +535,12 @@ class LimitLimiter(Star):
         """移除黑名单 /limit_blacklist_remove <用户ID>"""
         platform = str(event.platform)
 
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                "DELETE FROM blacklist WHERE user_id = ? AND platform = ?",
-                (user_id, platform),
-            )
-            await db.commit()
+        db = await self.get_db_connection()
+        await db.execute(
+            "DELETE FROM blacklist WHERE user_id = ? AND platform = ?",
+            (user_id, platform),
+        )
+        await db.commit()
 
         yield event.plain_result(f"✅ 用户 {user_id} 已从黑名单移除")
 
@@ -556,22 +550,27 @@ class LimitLimiter(Star):
         """查看黑名单 /limit_blacklist_list"""
         platform = str(event.platform)
 
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                "SELECT user_id, reason FROM blacklist WHERE platform = ?", (platform,)
-            ) as cursor:
-                rows = await cursor.fetchall()
+        db = await self.get_db_connection()
+        async with db.execute(
+            "SELECT user_id, reason FROM blacklist WHERE platform = ?", (platform,)
+        ) as cursor:
+            rows = await cursor.fetchall()
 
         if not rows:
             yield event.plain_result("📋 黑名单为空")
             return
 
         result = "📋 黑名单列表\n━━━━━━━━━━━━━\n"
-        for i, (user_id, reason) in enumerate(rows, 1):
+        # 限制显示条数,避免消息过长
+        max_display = 20
+        for i, (user_id, reason) in enumerate(rows[:max_display], 1):
             result += f"{i}. {user_id}"
             if reason:
                 result += f" ({reason})"
             result += "\n"
+
+        if len(rows) > max_display:
+            result += f"\n... 还有 {len(rows) - max_display} 条记录未显示"
 
         yield event.plain_result(result)
 
@@ -582,12 +581,12 @@ class LimitLimiter(Star):
         platform = str(event.platform)
         now = int(datetime.now().timestamp())
 
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                "INSERT OR IGNORE INTO whitelist (user_id, platform, add_time) VALUES (?, ?, ?)",
-                (user_id, platform, now),
-            )
-            await db.commit()
+        db = await self.get_db_connection()
+        await db.execute(
+            "INSERT OR IGNORE INTO whitelist (user_id, platform, add_time) VALUES (?, ?, ?)",
+            (user_id, platform, now),
+        )
+        await db.commit()
 
         yield event.plain_result(f"✅ 用户 {user_id} 已添加到白名单")
 
@@ -597,12 +596,12 @@ class LimitLimiter(Star):
         """移除白名单 /limit_whitelist_remove <用户ID>"""
         platform = str(event.platform)
 
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                "DELETE FROM whitelist WHERE user_id = ? AND platform = ?",
-                (user_id, platform),
-            )
-            await db.commit()
+        db = await self.get_db_connection()
+        await db.execute(
+            "DELETE FROM whitelist WHERE user_id = ? AND platform = ?",
+            (user_id, platform),
+        )
+        await db.commit()
 
         yield event.plain_result(f"✅ 用户 {user_id} 已从白名单移除")
 
@@ -612,19 +611,24 @@ class LimitLimiter(Star):
         """查看白名单 /limit_whitelist_list"""
         platform = str(event.platform)
 
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                "SELECT user_id FROM whitelist WHERE platform = ?", (platform,)
-            ) as cursor:
-                rows = await cursor.fetchall()
+        db = await self.get_db_connection()
+        async with db.execute(
+            "SELECT user_id FROM whitelist WHERE platform = ?", (platform,)
+        ) as cursor:
+            rows = await cursor.fetchall()
 
         if not rows:
             yield event.plain_result("📋 白名单为空")
             return
 
         result = "📋 白名单列表\n━━━━━━━━━━━━━\n"
-        for i, (user_id,) in enumerate(rows, 1):
+        # 限制显示条数,避免消息过长
+        max_display = 20
+        for i, (user_id,) in enumerate(rows[:max_display], 1):
             result += f"{i}. {user_id}\n"
+
+        if len(rows) > max_display:
+            result += f"\n... 还有 {len(rows) - max_display} 条记录未显示"
 
         yield event.plain_result(result)
 
@@ -634,13 +638,13 @@ class LimitLimiter(Star):
         """重置计数 /limit_reset <用户ID|群ID>"""
         platform = str(event.platform)
 
-        async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute(
-                "DELETE FROM ai_usage WHERE (user_id = ? OR group_id = ?) AND platform = ?",
-                (identity_id, identity_id, platform),
-            )
-            deleted = cursor.rowcount
-            await db.commit()
+        db = await self.get_db_connection()
+        cursor = await db.execute(
+            "DELETE FROM ai_usage WHERE (user_id = ? OR group_id = ?) AND platform = ?",
+            (identity_id, identity_id, platform),
+        )
+        deleted = cursor.rowcount
+        await db.commit()
 
         if deleted > 0:
             yield event.plain_result(f"✅ 已重置 {identity_id} 的使用计数")
@@ -678,34 +682,35 @@ class LimitLimiter(Star):
         """查看统计 /limit_stats [用户ID|群ID]"""
         platform = str(event.platform)
 
+        db = await self.get_db_connection()
         if identity_id:
-            async with aiosqlite.connect(self.db_path) as db:
-                async with db.execute(
-                    """SELECT user_id, group_id, use_date, use_count, identity_type
-                       FROM ai_usage
-                       WHERE (user_id = ? OR group_id = ?) AND platform = ?
-                       ORDER BY use_date DESC, use_count DESC""",
-                    (identity_id, identity_id, platform),
-                ) as cursor:
-                    rows = await cursor.fetchall()
+            async with db.execute(
+                """SELECT user_id, group_id, use_date, use_count, identity_type
+                   FROM ai_usage
+                   WHERE (user_id = ? OR group_id = ?) AND platform = ?
+                   ORDER BY use_date DESC, use_count DESC""",
+                (identity_id, identity_id, platform),
+            ) as cursor:
+                rows = await cursor.fetchall()
         else:
-            async with aiosqlite.connect(self.db_path) as db:
-                async with db.execute(
-                    """SELECT user_id, group_id, use_date, use_count, identity_type
-                       FROM ai_usage
-                       WHERE platform = ?
-                       ORDER BY use_date DESC, use_count DESC
-                       LIMIT 50""",
-                    (platform,),
-                ) as cursor:
-                    rows = await cursor.fetchall()
+            async with db.execute(
+                """SELECT user_id, group_id, use_date, use_count, identity_type
+                   FROM ai_usage
+                   WHERE platform = ?
+                   ORDER BY use_date DESC, use_count DESC
+                   LIMIT 50""",
+                (platform,),
+            ) as cursor:
+                rows = await cursor.fetchall()
 
         if not rows:
             yield event.plain_result("📊 暂无使用记录")
             return
 
         result = "📊 使用统计\n━━━━━━━━━━━━━\n"
-        for user_id, group_id, use_date, use_count, identity_type in rows:
+        # 限制显示条数,避免消息过长
+        max_display = 20
+        for user_id, group_id, use_date, use_count, identity_type in rows[:max_display]:
             if identity_type == "group":
                 result += f"群组 {group_id} "
             else:
@@ -713,5 +718,8 @@ class LimitLimiter(Star):
                 if group_id:
                     result += f"(群 {group_id}) "
             result += f"- {use_date}: {use_count} 次\n"
+
+        if len(rows) > max_display:
+            result += f"\n... 还有 {len(rows) - max_display} 条记录未显示"
 
         yield event.plain_result(result)
