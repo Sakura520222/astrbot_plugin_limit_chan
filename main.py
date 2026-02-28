@@ -16,11 +16,11 @@ from astrbot.api.star import Context, Star, register
 
 
 @register(
-    "limit_limiter",
+    "astrbot_plugin_limit_chan",
     "车厘子小樱",
     "限定酱 - 可爱的AI使用次数管理助手，支持多级配置和黑白名单✨",
     "1.0.0",
-    "https://github.com/Sakura520222/limit_limiter",
+    "https://github.com/Sakura520222/astrbot_plugin_limit_chan",
 )
 class LimitLimiter(Star):
     """限定酱 - AI使用次数管理助手✨"""
@@ -31,7 +31,7 @@ class LimitLimiter(Star):
         # 使用插件目录下的 data 子目录存储数据
         self.data_dir = Path(__file__).parent / "data"
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.db_path = self.data_dir / "limit_limiter.db"
+        self.db_path = self.data_dir / "astrbot_plugin_limit_chan.db"
         self._init_lock = asyncio.Lock()
         self._initialized = False
 

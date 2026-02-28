@@ -1,4 +1,4 @@
-name: limit_limiter
+name: astrbot_plugin_limit_chan
 display_name: 限定酱
 author: 车厘子小樱
 description: |
@@ -13,7 +13,7 @@ description: |
   
   适用场景：群聊管理、资源控制、防滥用
 version: 1.0.0
-repository: https://github.com/Sakura520222/limit_limiter
+repository: https://github.com/Sakura520222/astrbot_plugin_limit_chan
 tags:
   - ai
   - limit
