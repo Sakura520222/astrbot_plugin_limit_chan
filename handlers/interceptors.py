@@ -3,6 +3,7 @@
 import asyncio
 
 from astrbot.api.event import AstrMessageEvent
+from astrbot.api.provider import ProviderRequest
 
 from ..managers.permission import PermissionManager
 from ..managers.usage_manager import UsageManager
@@ -27,8 +28,13 @@ class LLMInterceptor:
         self.usage_manager = usage_manager
         self.background_tasks = set()  # 保存后台任务引用
 
-    async def on_llm_request(self, event: AstrMessageEvent):
-        """拦截 LLM 请求"""
+    async def on_llm_request(self, event: AstrMessageEvent, req: ProviderRequest):
+        """拦截 LLM 请求
+
+        Args:
+            event: 消息事件对象
+            req: LLM 请求对象（当前未使用，但框架要求必须接受此参数）
+        """
         user_id = event.get_sender_id()
         platform = str(event.platform)
         group_id = event.message_obj.group_id or ""

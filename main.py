@@ -7,7 +7,8 @@ import asyncio
 from datetime import datetime
 
 from astrbot.api import AstrBotConfig
-from astrbot.api.event import filter
+from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, StarTools
 
 from .commands.blacklist import BlacklistCommands
@@ -86,15 +87,15 @@ class LimitLimiter(Star):
 
     # ==================== 事件处理器 ====================
 
-    @filter.on_waiting_llm_request(priority=10)
-    async def on_llm_request(self, event):
+    @filter.on_llm_request(priority=10)
+    async def on_llm_request(self, event: AstrMessageEvent, req: ProviderRequest):
         """拦截 LLM 请求"""
-        await self.llm_interceptor.on_llm_request(event)
+        await self.llm_interceptor.on_llm_request(event, req)
 
     # ==================== 查询命令 ====================
 
     @filter.command("limit")
-    async def query_limit(self, event):
+    async def query_limit(self, event: AstrMessageEvent):
         """查询当前使用情况"""
         user_id = event.get_sender_id()
         platform = str(event.platform)
@@ -147,7 +148,11 @@ class LimitLimiter(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_group")
     async def limit_group(
-        self, event, group_id: str, limit: int, mode: str = "individual"
+        self,
+        event: AstrMessageEvent,
+        group_id: str,
+        limit: int,
+        mode: str = "individual",
     ):
         """设置群组配置"""
         platform = str(event.platform)
@@ -173,7 +178,7 @@ class LimitLimiter(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_user")
-    async def limit_user(self, event, user_id: str, limit: int):
+    async def limit_user(self, event: AstrMessageEvent, user_id: str, limit: int):
         """设置用户配置"""
         platform = str(event.platform)
 
@@ -194,7 +199,9 @@ class LimitLimiter(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_blacklist_add")
-    async def blacklist_add(self, event, user_id: str, reason: str = ""):
+    async def blacklist_add(
+        self, event: AstrMessageEvent, user_id: str, reason: str = ""
+    ):
         """添加黑名单"""
         platform = str(event.platform)
         now = int(datetime.now().timestamp())
@@ -214,7 +221,7 @@ class LimitLimiter(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_blacklist_remove")
-    async def blacklist_remove(self, event, user_id: str):
+    async def blacklist_remove(self, event: AstrMessageEvent, user_id: str):
         """移除黑名单"""
         platform = str(event.platform)
 
@@ -229,7 +236,7 @@ class LimitLimiter(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_blacklist_list")
-    async def blacklist_list(self, event):
+    async def blacklist_list(self, event: AstrMessageEvent):
         """查看黑名单"""
         platform = str(event.platform)
 
@@ -259,7 +266,7 @@ class LimitLimiter(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_whitelist_add")
-    async def whitelist_add(self, event, user_id: str):
+    async def whitelist_add(self, event: AstrMessageEvent, user_id: str):
         """添加白名单"""
         platform = str(event.platform)
         now = int(datetime.now().timestamp())
@@ -275,7 +282,7 @@ class LimitLimiter(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_whitelist_remove")
-    async def whitelist_remove(self, event, user_id: str):
+    async def whitelist_remove(self, event: AstrMessageEvent, user_id: str):
         """移除白名单"""
         platform = str(event.platform)
 
@@ -290,7 +297,7 @@ class LimitLimiter(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_whitelist_list")
-    async def whitelist_list(self, event):
+    async def whitelist_list(self, event: AstrMessageEvent):
         """查看白名单"""
         platform = str(event.platform)
 
@@ -317,7 +324,7 @@ class LimitLimiter(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_reset")
-    async def limit_reset(self, event, identity_id: str):
+    async def limit_reset(self, event: AstrMessageEvent, identity_id: str):
         """重置计数"""
         platform = str(event.platform)
 
@@ -336,7 +343,7 @@ class LimitLimiter(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_global")
-    async def limit_global(self, event, key: str, value: str):
+    async def limit_global(self, event: AstrMessageEvent, key: str, value: str):
         """设置全局配置"""
         valid_keys = ["daily_limit", "mode"]
 
@@ -359,7 +366,7 @@ class LimitLimiter(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_stats")
-    async def limit_stats(self, event, identity_id: str = None):
+    async def limit_stats(self, event: AstrMessageEvent, identity_id: str = None):
         """查看统计"""
         platform = str(event.platform)
 

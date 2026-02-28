@@ -7,6 +7,28 @@
 
 ---
 
+## [1.1.1] - 2026-02-28
+
+### 修复
+- **类型注解规范化**
+  - 为 `main.py` 中所有命令函数的 `event` 参数添加 `AstrMessageEvent` 类型注解
+  - 统一代码风格，与 `commands` 模块中的类型注解保持一致
+  - 提升代码可读性和 IDE 静态检查支持
+
+- **LLM 请求拦截器修复**
+  - 修复错误的装饰器：将 `@filter.on_waiting_llm_request` 改为 `@filter.on_llm_request`
+  - 修复方法签名：添加必需的第三个参数 `req: ProviderRequest`
+  - 同步更新 `handlers/interceptors.py` 中的方法签名以匹配框架规范
+  - 根据 AstrBot 框架文档，`@filter.on_llm_request` 必须接受三个参数 `(self, event, req)`
+
+### 优化
+- **代码质量提升**
+  - 通过 ruff 代码质量检查，无错误或警告
+  - 符合 PEP 8 编码规范
+  - 改进文档注释，说明参数用途
+
+---
+
 ## [1.1.0] - 2026-02-28
 
 ### 重构
