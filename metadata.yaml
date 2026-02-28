@@ -12,7 +12,7 @@ description: |
   - 跨平台：支持所有主流聊天平台
   
   适用场景：群聊管理、资源控制、防滥用
-version: 1.0.0
+version: 1.0.1
 repository: https://github.com/Sakura520222/astrbot_plugin_limit_chan
 tags:
   - ai

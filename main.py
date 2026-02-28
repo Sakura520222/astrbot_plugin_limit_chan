@@ -19,7 +19,7 @@ from astrbot.api.star import Context, Star, register
     "astrbot_plugin_limit_chan",
     "车厘子小樱",
     "限定酱 - 可爱的AI使用次数管理助手，支持多级配置和黑白名单✨",
-    "1.0.0",
+    "1.0.1",
     "https://github.com/Sakura520222/astrbot_plugin_limit_chan",
 )
 class LimitLimiter(Star):

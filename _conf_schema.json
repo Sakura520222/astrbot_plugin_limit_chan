@@ -23,11 +23,5 @@
     "type": "bool",
     "default": true,
     "hint": "启用后，黑名单用户将被禁止使用 AI 功能"
-  },
-  "cleanup_days": {
-    "description": "自动清理天数",
-    "type": "int",
-    "default": 30,
-    "hint": "自动清理多少天前的使用记录（0为不清理）"
   }
 }

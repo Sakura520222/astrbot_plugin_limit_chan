@@ -89,5 +89,16 @@
 
 ---
 
-[Unreleased]: https://github.com/Sakura520222/astrbot_plugin_limit_chan/compare/v1.0.0...HEAD
+## [1.0.1] - 2026-02-28
+
+### 移除
+- **未实现的自动清理配置**
+  - 从配置文件中移除 `cleanup_days` 配置项
+  - 该功能在配置文件中定义但未实现代码，为避免混淆予以移除
+
+---
+
+## [1.0.0] - 2025-02-28
+[Unreleased]: https://github.com/Sakura520222/astrbot_plugin_limit_chan/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/Sakura520222/astrbot_plugin_limit_chan/releases/tag/v1.0.1
 [1.0.0]: https://github.com/Sakura520222/astrbot_plugin_limit_chan/releases/tag/v1.0.0
