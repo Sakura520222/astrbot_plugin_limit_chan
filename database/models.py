@@ -21,10 +21,10 @@ class DatabaseModels:
 
     async def init_db(self):
         """初始化数据库表结构"""
-        db = await self.db_connection.get_connection()
-
-        # 确保 data 目录存在
+        # 确保 data 目录存在（在获取连接之前）
         self.db_connection.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        db = await self.db_connection.get_connection()
 
         # 启用 WAL 模式以提高并发性能
         await db.execute("PRAGMA journal_mode=WAL")

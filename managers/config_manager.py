@@ -5,6 +5,7 @@ from typing import Any
 from astrbot.api import AstrBotConfig
 
 from ..database.connection import DatabaseConnection
+from .cache_manager import CacheManager
 
 
 class ConfigManager:
@@ -21,9 +22,13 @@ class ConfigManager:
         self.db_connection = db_connection
         self.config = config or {}
 
+        # 初始化缓存管理器
+        # 黑白名单和配置数据缓存5分钟
+        self.cache = CacheManager(max_size=2000, default_ttl=300)
+
     async def get_global_config(self, key: str, default: Any = None) -> Any:
         """
-        获取全局配置（优先从配置文件读取，其次从数据库）
+        获取全局配置（优先级：缓存 > 数据库 > 配置文件 > 默认值）
 
         Args:
             key: 配置键
@@ -32,19 +37,30 @@ class ConfigManager:
         Returns:
             配置值
         """
-        # 先从配置文件读取
-        if self.config and key in self.config:
-            return self.config[key]
+        # 先从缓存读取
+        cached_value = await self.cache.get("global", key)
+        if cached_value is not None:
+            return cached_value
 
-        # 从数据库读取
+        # 缓存未命中，从数据库读取
         db = await self.db_connection.get_connection()
         async with db.execute(
             "SELECT value FROM global_config WHERE key = ?", (key,)
         ) as cursor:
             row = await cursor.fetchone()
             if row:
-                return row[0]
-            return default
+                value = row[0]
+                await self.cache.set(value, "global", key)
+                return value
+
+        # 其次从配置文件读取
+        if self.config and key in self.config:
+            value = self.config[key]
+            await self.cache.set(value, "global", key)
+            return value
+
+        # 最后使用默认值
+        return default
 
     async def set_global_config(self, key: str, value: str):
         """
@@ -61,6 +77,9 @@ class ConfigManager:
         )
         await db.commit()
 
+        # 清除相关缓存
+        await self.cache.delete("global", key)
+
     async def is_blacklisted(self, user_id: str, platform: str) -> bool:
         """
         检查是否在黑名单
@@ -76,12 +95,21 @@ class ConfigManager:
         if self.config and not self.config.get("enable_blacklist", True):
             return False
 
+        # 先从缓存读取
+        cached_value = await self.cache.get("blacklist", user_id, platform)
+        if cached_value is not None:
+            return cached_value
+
+        # 缓存未命中，从数据库读取
         db = await self.db_connection.get_connection()
         async with db.execute(
             "SELECT 1 FROM blacklist WHERE user_id = ? AND platform = ?",
             (user_id, platform),
         ) as cursor:
-            return await cursor.fetchone() is not None
+            result = await cursor.fetchone() is not None
+            # 缓存结果
+            await self.cache.set(result, "blacklist", user_id, platform)
+            return result
 
     async def is_whitelisted(self, user_id: str, platform: str) -> bool:
         """
@@ -98,12 +126,21 @@ class ConfigManager:
         if self.config and not self.config.get("enable_whitelist", True):
             return False
 
+        # 先从缓存读取
+        cached_value = await self.cache.get("whitelist", user_id, platform)
+        if cached_value is not None:
+            return cached_value
+
+        # 缓存未命中，从数据库读取
         db = await self.db_connection.get_connection()
         async with db.execute(
             "SELECT 1 FROM whitelist WHERE user_id = ? AND platform = ?",
             (user_id, platform),
         ) as cursor:
-            return await cursor.fetchone() is not None
+            result = await cursor.fetchone() is not None
+            # 缓存结果
+            await self.cache.set(result, "whitelist", user_id, platform)
+            return result
 
     async def get_user_config(
         self, user_id: str, platform: str
@@ -118,6 +155,12 @@ class ConfigManager:
         Returns:
             用户配置字典或None
         """
+        # 先从缓存读取
+        cached_value = await self.cache.get("user_config", user_id, platform)
+        if cached_value is not None:
+            return cached_value if cached_value else None
+
+        # 缓存未命中，从数据库读取
         db = await self.db_connection.get_connection()
         async with db.execute(
             """SELECT daily_limit, enabled FROM user_config
@@ -126,7 +169,11 @@ class ConfigManager:
         ) as cursor:
             row = await cursor.fetchone()
             if row:
-                return {"daily_limit": row[0], "enabled": row[1]}
+                result = {"daily_limit": row[0], "enabled": row[1]}
+                await self.cache.set(result, "user_config", user_id, platform)
+                return result
+            # 缓存空结果以避免重复查询
+            await self.cache.set(False, "user_config", user_id, platform)
             return None
 
     async def get_group_config(
@@ -142,6 +189,12 @@ class ConfigManager:
         Returns:
             群组配置字典或None
         """
+        # 先从缓存读取
+        cached_value = await self.cache.get("group_config", group_id, platform)
+        if cached_value is not None:
+            return cached_value if cached_value else None
+
+        # 缓存未命中，从数据库读取
         db = await self.db_connection.get_connection()
         async with db.execute(
             """SELECT daily_limit, mode, enabled FROM group_config
@@ -150,5 +203,31 @@ class ConfigManager:
         ) as cursor:
             row = await cursor.fetchone()
             if row:
-                return {"daily_limit": row[0], "mode": row[1], "enabled": row[2]}
+                result = {"daily_limit": row[0], "mode": row[1], "enabled": row[2]}
+                await self.cache.set(result, "group_config", group_id, platform)
+                return result
+            # 缓存空结果以避免重复查询
+            await self.cache.set(False, "group_config", group_id, platform)
             return None
+
+    async def invalidate_user_cache(self, user_id: str, platform: str):
+        """
+        清除用户相关缓存
+
+        Args:
+            user_id: 用户ID
+            platform: 平台
+        """
+        await self.cache.delete("blacklist", user_id, platform)
+        await self.cache.delete("whitelist", user_id, platform)
+        await self.cache.delete("user_config", user_id, platform)
+
+    async def invalidate_group_cache(self, group_id: str, platform: str):
+        """
+        清除群组相关缓存
+
+        Args:
+            group_id: 群组ID
+            platform: 平台
+        """
+        await self.cache.delete("group_config", group_id, platform)

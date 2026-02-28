@@ -4,12 +4,17 @@ AstrBot AI 使用次数限制插件
 """
 
 import asyncio
+import logging
 from datetime import datetime
 
 from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, StarTools
+from astrbot.core.utils.session_waiter import (
+    SessionController,
+    session_waiter,
+)
 
 from .database.connection import DatabaseConnection
 from .database.models import DatabaseModels
@@ -17,6 +22,8 @@ from .handlers.interceptors import LLMInterceptor
 from .managers.config_manager import ConfigManager
 from .managers.permission import PermissionManager
 from .managers.usage_manager import UsageManager
+
+logger = logging.getLogger(__name__)
 
 
 class LimitLimiter(Star):
@@ -122,6 +129,97 @@ class LimitLimiter(Star):
         )
         yield event.plain_result(result)
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("limit_clear_db")
+    async def limit_clear_db(self, event: AstrMessageEvent):
+        """一键清空数据库"""
+        user_id = event.get_sender_id()
+        platform = str(event.platform)
+
+        # 发送警告信息
+        warning_msg = (
+            "⚠️ 警告：此操作将完全清空数据库！\n\n"
+            "这将删除：\n"
+            "- 黑名单和白名单\n"
+            "- 所有群组和用户配置\n"
+            "- 所有使用记录\n\n"
+            "清空后将恢复默认配置：\n"
+            "- 每日限制：20 次\n"
+            "- 模式：individual（独立模式）\n\n"
+            "请在 30 秒内发送「确认」以继续操作\n"
+            "发送其他内容将取消操作"
+        )
+        yield event.plain_result(warning_msg)
+
+        # 定义会话等待函数
+        @session_waiter(timeout=30, record_history_chains=False)
+        async def clear_db_waiter(
+            controller: SessionController, event: AstrMessageEvent
+        ):
+            user_input = event.message_str.strip()
+
+            # 检查用户是否确认
+            if user_input != "确认":
+                await event.send(event.plain_result("❌ 操作已取消"))
+                controller.stop()
+                return
+
+            # 用户确认，执行清空操作
+            try:
+                db = await self.db_connection.get_connection()
+
+                # 删除所有表的数据
+                await db.execute("DELETE FROM blacklist")
+                await db.execute("DELETE FROM whitelist")
+                await db.execute("DELETE FROM group_config")
+                await db.execute("DELETE FROM user_config")
+                await db.execute("DELETE FROM ai_usage")
+                await db.execute("DELETE FROM global_config")
+
+                # 恢复默认全局配置
+                await db.execute(
+                    """
+                    INSERT INTO global_config (key, value)
+                    VALUES ('daily_limit', '20')
+                """
+                )
+                await db.execute(
+                    """
+                    INSERT INTO global_config (key, value)
+                    VALUES ('mode', 'individual')
+                """
+                )
+
+                await db.commit()
+
+                # 清除所有缓存
+                await self.config_manager.cache.clear_all()
+                await self.usage_manager.count_cache.clear_all()
+
+                # 记录日志
+                logger.info(
+                    f"数据库已清空 - 操作者: {user_id} ({platform}), 时间: {datetime.now()}"
+                )
+
+                await event.send(event.plain_result("✅ 数据库已完全清空完成！"))
+                controller.stop()
+
+            except Exception as e:
+                logger.error(f"清空数据库失败: {e}", exc_info=True)
+                await event.send(event.plain_result(f"❌ 清空失败: {str(e)}"))
+                controller.stop()
+
+        # 启动会话等待
+        try:
+            await clear_db_waiter(event)
+        except TimeoutError:
+            yield event.plain_result("⏰ 操作已超时，已自动取消")
+        except Exception as e:
+            logger.error(f"会话控制错误: {e}", exc_info=True)
+            yield event.plain_result(f"❌ 发生错误: {str(e)}")
+        finally:
+            event.stop_event()
+
     # ==================== 管理命令 ====================
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -140,20 +238,34 @@ class LimitLimiter(Star):
             yield event.plain_result("❌ 模式必须是 individual 或 shared")
             return
 
-        db = await self.db_connection.get_connection()
-        await db.execute(
-            """
-            INSERT OR REPLACE INTO group_config
-            (group_id, platform, daily_limit, mode, enabled)
-            VALUES (?, ?, ?, ?, 1)
-        """,
-            (group_id, platform, limit, mode),
-        )
-        await db.commit()
+        # 校验 limit 值：-1 表示无限制，>=0 表示具体次数
+        if limit < -1:
+            yield event.plain_result("❌ 限制次数不能小于 -1（-1 表示无限制）")
+            return
 
-        yield event.plain_result(
-            f"✅ 群组 {group_id} 配置已更新\n限制: {limit} 次/天\n模式: {mode}"
-        )
+        try:
+            db = await self.db_connection.get_connection()
+            await db.execute(
+                """
+                INSERT OR REPLACE INTO group_config
+                (group_id, platform, daily_limit, mode, enabled)
+                VALUES (?, ?, ?, ?, 1)
+            """,
+                (group_id, platform, limit, mode),
+            )
+            await db.commit()
+
+            # 清除相关缓存
+            await self.config_manager.invalidate_group_cache(group_id, platform)
+
+            yield event.plain_result(
+                f"✅ 群组 {group_id} 配置已更新\n限制: {limit} 次/天\n模式: {mode}"
+            )
+        except Exception as e:
+            logger.error(
+                f"设置群组配置失败: group_id={group_id}, error={e}", exc_info=True
+            )
+            yield event.plain_result("❌ 设置失败，请稍后重试")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_user")
@@ -161,20 +273,34 @@ class LimitLimiter(Star):
         """设置用户配置"""
         platform = str(event.platform)
 
-        db = await self.db_connection.get_connection()
-        await db.execute(
-            """
-            INSERT OR REPLACE INTO user_config
-            (user_id, platform, daily_limit, enabled)
-            VALUES (?, ?, ?, 1)
-        """,
-            (user_id, platform, limit),
-        )
-        await db.commit()
+        # 校验 limit 值：-1 表示无限制，>=0 表示具体次数
+        if limit < -1:
+            yield event.plain_result("❌ 限制次数不能小于 -1（-1 表示无限制）")
+            return
 
-        yield event.plain_result(
-            f"✅ 用户 {user_id} 配置已更新\n限制: {limit} 次/天(独立模式)"
-        )
+        try:
+            db = await self.db_connection.get_connection()
+            await db.execute(
+                """
+                INSERT OR REPLACE INTO user_config
+                (user_id, platform, daily_limit, enabled)
+                VALUES (?, ?, ?, 1)
+            """,
+                (user_id, platform, limit),
+            )
+            await db.commit()
+
+            # 清除相关缓存
+            await self.config_manager.invalidate_user_cache(user_id, platform)
+
+            yield event.plain_result(
+                f"✅ 用户 {user_id} 配置已更新\n限制: {limit} 次/天(独立模式)"
+            )
+        except Exception as e:
+            logger.error(
+                f"设置用户配置失败: user_id={user_id}, error={e}", exc_info=True
+            )
+            yield event.plain_result("❌ 设置失败，请稍后重试")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_blacklist_add")
@@ -196,6 +322,9 @@ class LimitLimiter(Star):
         )
         await db.commit()
 
+        # 清除相关缓存
+        await self.config_manager.invalidate_user_cache(user_id, platform)
+
         yield event.plain_result(f"✅ 用户 {user_id} 已添加到黑名单")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -210,6 +339,9 @@ class LimitLimiter(Star):
             (user_id, platform),
         )
         await db.commit()
+
+        # 清除相关缓存
+        await self.config_manager.invalidate_user_cache(user_id, platform)
 
         yield event.plain_result(f"✅ 用户 {user_id} 已从黑名单移除")
 
@@ -257,6 +389,9 @@ class LimitLimiter(Star):
         )
         await db.commit()
 
+        # 清除相关缓存
+        await self.config_manager.invalidate_user_cache(user_id, platform)
+
         yield event.plain_result(f"✅ 用户 {user_id} 已添加到白名单")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -271,6 +406,9 @@ class LimitLimiter(Star):
             (user_id, platform),
         )
         await db.commit()
+
+        # 清除相关缓存
+        await self.config_manager.invalidate_user_cache(user_id, platform)
 
         yield event.plain_result(f"✅ 用户 {user_id} 已从白名单移除")
 
@@ -306,6 +444,7 @@ class LimitLimiter(Star):
     async def limit_reset(self, event: AstrMessageEvent, identity_id: str):
         """重置计数"""
         platform = str(event.platform)
+        group_id = ""  # 重置命令可能同时清除用户和群组的计数
 
         db = await self.db_connection.get_connection()
         async with db.execute(
@@ -314,6 +453,9 @@ class LimitLimiter(Star):
         ) as cursor:
             deleted = cursor.rowcount
         await db.commit()
+
+        # 清除使用计数缓存
+        await self.usage_manager.invalidate_cache(identity_id, platform, group_id)
 
         if deleted > 0:
             yield event.plain_result(f"✅ 已重置 {identity_id} 的使用计数")

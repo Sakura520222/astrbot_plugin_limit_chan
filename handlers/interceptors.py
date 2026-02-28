@@ -1,12 +1,14 @@
 """LLM请求拦截器 - 拦截AI请求并验证权限"""
 
-import asyncio
+import logging
 
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.provider import ProviderRequest
 
 from ..managers.permission import PermissionManager
 from ..managers.usage_manager import UsageManager
+
+logger = logging.getLogger(__name__)
 
 
 class LLMInterceptor:
@@ -66,27 +68,27 @@ class LLMInterceptor:
             identity_type = "user"
             msg_type = "个人" if not group_id else "个人（群内）"
 
-        # 检查使用次数
-        current_count = await self.usage_manager.get_usage_count(
-            identity_id, identity_type, platform, group_id
-        )
+        # 原子性检查并增加使用次数
+        try:
+            allowed, current_count = await self.usage_manager.check_and_increment(
+                identity_id, identity_type, platform, group_id, user_id, limit
+            )
 
-        if current_count >= limit:
-            event.stop_event()
-            await event.send(
-                event.plain_result(
-                    f"❌ 今日{msg_type} AI 使用次数已达上限！\n"
-                    f"已使用: {current_count}/{limit} 次\n"
-                    f"配置来源: {source}"
+            if not allowed:
+                event.stop_event()
+                await event.send(
+                    event.plain_result(
+                        f"❌ 今日{msg_type} AI 使用次数已达上限！\n"
+                        f"已使用: {current_count}/{limit} 次\n"
+                        f"配置来源: {source}"
+                    )
                 )
-            )
-            return
+                return
+            # 允许继续使用，计数已自动增加，无需额外操作
 
-        # 异步更新计数（不阻塞请求，保存任务引用）
-        task = asyncio.create_task(
-            self.usage_manager.increment_usage(
-                identity_id, identity_type, platform, group_id, user_id
-            )
-        )
-        self.background_tasks.add(task)
-        task.add_done_callback(self.background_tasks.discard)
+        except Exception as e:
+            logger.error(f"处理使用次数时发生错误: {e}", exc_info=True)
+            # 出错时为了安全起见，拒绝请求
+            event.stop_event()
+            await event.send(event.plain_result("❌ 系统错误，请稍后重试"))
+            return
