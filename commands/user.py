@@ -24,14 +24,15 @@ class UserCommand:
         platform = str(event.platform)
 
         db = await self.db_connection.get_connection()
-        await db.execute(
+        async with await db.execute(
             """
             INSERT OR REPLACE INTO user_config
             (user_id, platform, daily_limit, enabled)
             VALUES (?, ?, ?, 1)
         """,
             (user_id, platform, limit),
-        )
+        ):
+            pass
         await db.commit()
 
         yield event.plain_result(

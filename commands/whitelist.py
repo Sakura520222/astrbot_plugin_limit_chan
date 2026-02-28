@@ -27,10 +27,11 @@ class WhitelistCommands:
         now = int(datetime.now().timestamp())
 
         db = await self.db_connection.get_connection()
-        await db.execute(
+        async with await db.execute(
             "INSERT OR IGNORE INTO whitelist (user_id, platform, add_time) VALUES (?, ?, ?)",
             (user_id, platform, now),
-        )
+        ):
+            pass
         await db.commit()
 
         yield event.plain_result(f"✅ 用户 {user_id} 已添加到白名单")
@@ -42,10 +43,11 @@ class WhitelistCommands:
         platform = str(event.platform)
 
         db = await self.db_connection.get_connection()
-        await db.execute(
+        async with await db.execute(
             "DELETE FROM whitelist WHERE user_id = ? AND platform = ?",
             (user_id, platform),
-        )
+        ):
+            pass
         await db.commit()
 
         yield event.plain_result(f"✅ 用户 {user_id} 已从白名单移除")

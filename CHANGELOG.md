@@ -7,6 +7,30 @@
 
 ---
 
+## [1.1.2] - 2026-02-28
+
+### 修复
+- **数据库游标资源泄漏修复**
+  - 修复 `commands/reset.py` 中 `limit_reset` 方法的游标泄漏问题
+  - 修复 `commands/blacklist.py` 中 `blacklist_add` 和 `blacklist_remove` 方法的游标泄漏问题
+  - 修复 `commands/whitelist.py` 中 `whitelist_add` 和 `whitelist_remove` 方法的游标泄漏问题
+  - 修复 `commands/group.py` 中 `limit_group` 方法的游标泄漏问题
+  - 修复 `commands/user.py` 中 `limit_user` 方法的游标泄漏问题
+
+### 优化
+- **数据库初始化性能优化**
+  - 将 `database/models.py` 中的 13 个独立 DDL 语句合并为一次 `executescript` 调用
+  - 减少数据库初始化的网络请求次数，提升初始化性能
+  - 代码更简洁易维护
+
+### 改进
+- **代码质量提升**
+  - 所有数据库操作统一使用 `async with` 上下文管理器，确保游标资源正确释放
+  - 符合 Python asyncio 资源管理最佳实践
+  - 提高高并发场景下的稳定性，避免游标资源堆积
+
+---
+
 ## [1.1.1] - 2026-02-28
 
 ### 修复

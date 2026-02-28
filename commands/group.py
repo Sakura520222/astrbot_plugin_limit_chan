@@ -34,14 +34,15 @@ class GroupCommand:
             return
 
         db = await self.db_connection.get_connection()
-        await db.execute(
+        async with await db.execute(
             """
             INSERT OR REPLACE INTO group_config
             (group_id, platform, daily_limit, mode, enabled)
             VALUES (?, ?, ?, ?, 1)
         """,
             (group_id, platform, limit, mode),
-        )
+        ):
+            pass
         await db.commit()
 
         yield event.plain_result(

@@ -24,11 +24,11 @@ class ResetCommand:
         platform = str(event.platform)
 
         db = await self.db_connection.get_connection()
-        cursor = await db.execute(
+        async with await db.execute(
             "DELETE FROM ai_usage WHERE (user_id = ? OR group_id = ?) AND platform = ?",
             (identity_id, identity_id, platform),
-        )
-        deleted = cursor.rowcount
+        ) as cursor:
+            deleted = cursor.rowcount
         await db.commit()
 
         if deleted > 0:

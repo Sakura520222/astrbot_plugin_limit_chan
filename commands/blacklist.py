@@ -29,14 +29,15 @@ class BlacklistCommands:
         now = int(datetime.now().timestamp())
 
         db = await self.db_connection.get_connection()
-        await db.execute(
+        async with await db.execute(
             """
             INSERT OR REPLACE INTO blacklist
             (user_id, platform, add_time, reason)
             VALUES (?, ?, ?, ?)
         """,
             (user_id, platform, now, reason),
-        )
+        ):
+            pass
         await db.commit()
 
         yield event.plain_result(f"✅ 用户 {user_id} 已添加到黑名单")
@@ -48,10 +49,11 @@ class BlacklistCommands:
         platform = str(event.platform)
 
         db = await self.db_connection.get_connection()
-        await db.execute(
+        async with await db.execute(
             "DELETE FROM blacklist WHERE user_id = ? AND platform = ?",
             (user_id, platform),
-        )
+        ):
+            pass
         await db.commit()
 
         yield event.plain_result(f"✅ 用户 {user_id} 已从黑名单移除")

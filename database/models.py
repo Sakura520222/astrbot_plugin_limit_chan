@@ -30,16 +30,15 @@ class DatabaseModels:
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("PRAGMA synchronous=NORMAL")
 
-        # 全局配置表
-        await db.execute("""
+        # 批量创建表和索引
+        await db.executescript("""
+            -- 全局配置表
             CREATE TABLE IF NOT EXISTS global_config (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
-            )
-        """)
+            );
 
-        # 群组配置表
-        await db.execute("""
+            -- 群组配置表
             CREATE TABLE IF NOT EXISTS group_config (
                 group_id TEXT NOT NULL,
                 platform TEXT NOT NULL,
@@ -47,43 +46,35 @@ class DatabaseModels:
                 mode TEXT NOT NULL DEFAULT 'individual',
                 enabled INTEGER DEFAULT 1,
                 PRIMARY KEY (group_id, platform)
-            )
-        """)
+            );
 
-        # 用户配置表
-        await db.execute("""
+            -- 用户配置表
             CREATE TABLE IF NOT EXISTS user_config (
                 user_id TEXT NOT NULL,
                 platform TEXT NOT NULL,
                 daily_limit INTEGER NOT NULL,
                 enabled INTEGER DEFAULT 1,
                 PRIMARY KEY (user_id, platform)
-            )
-        """)
+            );
 
-        # 黑名单表
-        await db.execute("""
+            -- 黑名单表
             CREATE TABLE IF NOT EXISTS blacklist (
                 user_id TEXT NOT NULL,
                 platform TEXT NOT NULL,
                 add_time INTEGER NOT NULL,
                 reason TEXT DEFAULT '',
                 PRIMARY KEY (user_id, platform)
-            )
-        """)
+            );
 
-        # 白名单表
-        await db.execute("""
+            -- 白名单表
             CREATE TABLE IF NOT EXISTS whitelist (
                 user_id TEXT NOT NULL,
                 platform TEXT NOT NULL,
                 add_time INTEGER NOT NULL,
                 PRIMARY KEY (user_id, platform)
-            )
-        """)
+            );
 
-        # 使用记录表
-        await db.execute("""
+            -- 使用记录表
             CREATE TABLE IF NOT EXISTS ai_usage (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 identity_id TEXT NOT NULL,
@@ -95,18 +86,14 @@ class DatabaseModels:
                 use_count INTEGER DEFAULT 0,
                 last_use_time INTEGER,
                 UNIQUE(identity_id, identity_type, platform, group_id, use_date)
-            )
-        """)
+            );
 
-        # 创建索引
-        await db.execute("""
+            -- 创建索引
             CREATE INDEX IF NOT EXISTS idx_identity_usage
-            ON ai_usage(identity_id, identity_type, use_date)
-        """)
+            ON ai_usage(identity_id, identity_type, use_date);
 
-        await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_user_usage
-            ON ai_usage(user_id, platform, use_date)
+            ON ai_usage(user_id, platform, use_date);
         """)
 
         # 从配置文件初始化全局默认配置
