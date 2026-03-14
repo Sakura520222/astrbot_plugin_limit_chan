@@ -1,15 +1,47 @@
-"""配置管理器 - 处理全局、用户、群组配置及黑白名单"""
+"""配置管理器 - 从配置文件读取黑名单、白名单、用户/群组配置"""
 
+import json
+import logging
 from typing import Any
 
 from astrbot.api import AstrBotConfig
 
 from ..database.connection import DatabaseConnection
-from .cache_manager import CacheManager
+
+logger = logging.getLogger(__name__)
+
+
+def _parse_json_config(value: Any, default: Any = None) -> Any:
+    """
+    解析配置中的 JSON 字符串
+    
+    Args:
+        value: 配置值（可能是字符串或字典）
+        default: 默认值
+        
+    Returns:
+        解析后的值
+    """
+    if value is None:
+        return default
+    
+    # 如果已经是字典/列表，直接返回
+    if isinstance(value, (dict, list)):
+        return value
+    
+    # 如果是字符串，尝试解析 JSON
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning(f"无法解析 JSON 配置: {value}")
+            return default
+    
+    return default
 
 
 class ConfigManager:
-    """配置管理器"""
+    """配置管理器 - 从配置文件读取所有配置"""
 
     def __init__(self, db_connection: DatabaseConnection, config: AstrBotConfig = None):
         """
@@ -22,13 +54,9 @@ class ConfigManager:
         self.db_connection = db_connection
         self.config = config or {}
 
-        # 初始化缓存管理器
-        # 黑白名单和配置数据缓存5分钟
-        self.cache = CacheManager(max_size=2000, default_ttl=300)
-
     async def get_global_config(self, key: str, default: Any = None) -> Any:
         """
-        获取全局配置（优先级：缓存 > 数据库 > 配置文件 > 默认值）
+        获取全局配置（优先级：配置文件 > 数据库 > 默认值）
 
         Args:
             key: 配置键
@@ -37,34 +65,25 @@ class ConfigManager:
         Returns:
             配置值
         """
-        # 先从缓存读取
-        cached_value = await self.cache.get("global", key)
-        if cached_value is not None:
-            return cached_value
+        # 优先从配置文件读取
+        if self.config and key in self.config:
+            return self.config[key]
 
-        # 缓存未命中，从数据库读取
+        # 其次从数据库读取（兼容旧数据）
         db = await self.db_connection.get_connection()
         async with db.execute(
             "SELECT value FROM global_config WHERE key = ?", (key,)
         ) as cursor:
             row = await cursor.fetchone()
             if row:
-                value = row[0]
-                await self.cache.set(value, "global", key)
-                return value
-
-        # 其次从配置文件读取
-        if self.config and key in self.config:
-            value = self.config[key]
-            await self.cache.set(value, "global", key)
-            return value
+                return row[0]
 
         # 最后使用默认值
         return default
 
     async def set_global_config(self, key: str, value: str):
         """
-        设置全局配置
+        设置全局配置到数据库
 
         Args:
             key: 配置键
@@ -77,76 +96,43 @@ class ConfigManager:
         )
         await db.commit()
 
-        # 清除相关缓存
-        await self.cache.delete("global", key)
-
-    async def is_blacklisted(self, user_id: str, platform: str) -> bool:
+    def is_blacklisted(self, user_id: str, platform: str) -> bool:
         """
-        检查是否在黑名单
+        检查是否在黑名单（从配置文件读取）
 
         Args:
             user_id: 用户ID
-            platform: 平台
+            platform: 平台（暂未使用，保留用于未来扩展）
 
         Returns:
             是否在黑名单中
         """
-        # 检查配置文件中是否启用了黑名单功能
-        if self.config and not self.config.get("enable_blacklist", True):
+        if not self.config:
             return False
 
-        # 先从缓存读取
-        cached_value = await self.cache.get("blacklist", user_id, platform)
-        if cached_value is not None:
-            return cached_value
+        blacklist = self.config.get("blacklist", [])
+        return user_id in blacklist
 
-        # 缓存未命中，从数据库读取
-        db = await self.db_connection.get_connection()
-        async with db.execute(
-            "SELECT 1 FROM blacklist WHERE user_id = ? AND platform = ?",
-            (user_id, platform),
-        ) as cursor:
-            result = await cursor.fetchone() is not None
-            # 缓存结果
-            await self.cache.set(result, "blacklist", user_id, platform)
-            return result
-
-    async def is_whitelisted(self, user_id: str, platform: str) -> bool:
+    def is_whitelisted(self, user_id: str, platform: str) -> bool:
         """
-        检查是否在白名单
+        检查是否在白名单（从配置文件读取）
 
         Args:
             user_id: 用户ID
-            platform: 平台
+            platform: 平台（暂未使用，保留用于未来扩展）
 
         Returns:
             是否在白名单中
         """
-        # 检查配置文件中是否启用了白名单功能
-        if self.config and not self.config.get("enable_whitelist", True):
+        if not self.config:
             return False
 
-        # 先从缓存读取
-        cached_value = await self.cache.get("whitelist", user_id, platform)
-        if cached_value is not None:
-            return cached_value
+        whitelist = self.config.get("whitelist", [])
+        return user_id in whitelist
 
-        # 缓存未命中，从数据库读取
-        db = await self.db_connection.get_connection()
-        async with db.execute(
-            "SELECT 1 FROM whitelist WHERE user_id = ? AND platform = ?",
-            (user_id, platform),
-        ) as cursor:
-            result = await cursor.fetchone() is not None
-            # 缓存结果
-            await self.cache.set(result, "whitelist", user_id, platform)
-            return result
-
-    async def get_user_config(
-        self, user_id: str, platform: str
-    ) -> dict[str, Any] | None:
+    def get_user_config(self, user_id: str, platform: str) -> dict[str, Any] | None:
         """
-        获取用户配置
+        获取用户配置（从配置文件读取）
 
         Args:
             user_id: 用户ID
@@ -155,32 +141,18 @@ class ConfigManager:
         Returns:
             用户配置字典或None
         """
-        # 先从缓存读取
-        cached_value = await self.cache.get("user_config", user_id, platform)
-        if cached_value is not None:
-            return cached_value if cached_value else None
-
-        # 缓存未命中，从数据库读取
-        db = await self.db_connection.get_connection()
-        async with db.execute(
-            """SELECT daily_limit, enabled FROM user_config
-               WHERE user_id = ? AND platform = ?""",
-            (user_id, platform),
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                result = {"daily_limit": row[0], "enabled": row[1]}
-                await self.cache.set(result, "user_config", user_id, platform)
-                return result
-            # 缓存空结果以避免重复查询
-            await self.cache.set(False, "user_config", user_id, platform)
+        if not self.config:
             return None
 
-    async def get_group_config(
-        self, group_id: str, platform: str
-    ) -> dict[str, Any] | None:
+        user_configs = _parse_json_config(self.config.get("user_configs", {}), {})
+        if not user_configs or platform not in user_configs:
+            return None
+
+        return user_configs[platform].get(user_id)
+
+    def get_group_config(self, group_id: str, platform: str) -> dict[str, Any] | None:
         """
-        获取群组配置
+        获取群组配置（从配置文件读取）
 
         Args:
             group_id: 群组ID
@@ -189,45 +161,33 @@ class ConfigManager:
         Returns:
             群组配置字典或None
         """
-        # 先从缓存读取
-        cached_value = await self.cache.get("group_config", group_id, platform)
-        if cached_value is not None:
-            return cached_value if cached_value else None
-
-        # 缓存未命中，从数据库读取
-        db = await self.db_connection.get_connection()
-        async with db.execute(
-            """SELECT daily_limit, mode, enabled FROM group_config
-               WHERE group_id = ? AND platform = ?""",
-            (group_id, platform),
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                result = {"daily_limit": row[0], "mode": row[1], "enabled": row[2]}
-                await self.cache.set(result, "group_config", group_id, platform)
-                return result
-            # 缓存空结果以避免重复查询
-            await self.cache.set(False, "group_config", group_id, platform)
+        if not self.config:
             return None
+
+        group_configs = _parse_json_config(self.config.get("group_configs", {}), {})
+        if not group_configs or platform not in group_configs:
+            return None
+
+        return group_configs[platform].get(group_id)
 
     async def invalidate_user_cache(self, user_id: str, platform: str):
         """
-        清除用户相关缓存
+        清除用户相关缓存（已废弃，配置文件无需缓存）
 
         Args:
             user_id: 用户ID
             platform: 平台
         """
-        await self.cache.delete("blacklist", user_id, platform)
-        await self.cache.delete("whitelist", user_id, platform)
-        await self.cache.delete("user_config", user_id, platform)
+        # 配置文件模式无需缓存，此方法保留以兼容
+        pass
 
     async def invalidate_group_cache(self, group_id: str, platform: str):
         """
-        清除群组相关缓存
+        清除群组相关缓存（已废弃，配置文件无需缓存）
 
         Args:
             group_id: 群组ID
             platform: 平台
         """
-        await self.cache.delete("group_config", group_id, platform)
+        # 配置文件模式无需缓存，此方法保留以兼容
+        pass

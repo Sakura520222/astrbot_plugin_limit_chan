@@ -2,7 +2,7 @@ name: astrbot_plugin_limit_chan
 display_name: 限定酱
 author: 车厘子小樱
 description: 可爱的AI使用次数管理助手✨，支持全局/群组/用户三级配置、黑白名单、独立/共享双模式，搭载完整指令集且跨全平台，轻松实现群聊管理、资源控制与防滥用。
-version: 1.1.5
+version: 2.0.1
 repo: https://github.com/Sakura520222/astrbot_plugin_limit_chan
 tags:
   - ai
