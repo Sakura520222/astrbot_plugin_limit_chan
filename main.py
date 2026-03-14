@@ -61,49 +61,25 @@ class LimitLimiter(Star):
         if migrated_config and any(migrated_config.values()):
             logger.info("检测到旧配置，已自动迁移。建议通过 AstrBot 管理界面保存配置以持久化迁移的数据。")
             
-            # 合并迁移的配置到当前配置
+            # 确保配置初始化
             if not self.config:
                 self.config = {}
             
-            # 合并黑名单
-            if migrated_config["blacklist"]:
-                if "blacklist" not in self.config:
-                    self.config["blacklist"] = {}
-                for platform, users in migrated_config["blacklist"].items():
-                    if platform not in self.config["blacklist"]:
-                        self.config["blacklist"][platform] = []
-                    self.config["blacklist"][platform].extend(users)
-                    # 去重
-                    self.config["blacklist"][platform] = list(set(self.config["blacklist"][platform]))
+            # 合并黑名单（从旧的多平台格式合并为简单列表）
+            if migrated_config.get("blacklist"):
+                current_blacklist = self.config.get("blacklist", [])
+                for platform_users in migrated_config["blacklist"].values():
+                    if isinstance(platform_users, list):
+                        current_blacklist.extend(platform_users)
+                self.config["blacklist"] = list(set(current_blacklist))  # 去重
             
-            # 合并白名单
-            if migrated_config["whitelist"]:
-                if "whitelist" not in self.config:
-                    self.config["whitelist"] = {}
-                for platform, users in migrated_config["whitelist"].items():
-                    if platform not in self.config["whitelist"]:
-                        self.config["whitelist"][platform] = []
-                    self.config["whitelist"][platform].extend(users)
-                    # 去重
-                    self.config["whitelist"][platform] = list(set(self.config["whitelist"][platform]))
-            
-            # 合并用户配置
-            if migrated_config["user_configs"]:
-                if "user_configs" not in self.config:
-                    self.config["user_configs"] = {}
-                for platform, users in migrated_config["user_configs"].items():
-                    if platform not in self.config["user_configs"]:
-                        self.config["user_configs"][platform] = {}
-                    self.config["user_configs"][platform].update(users)
-            
-            # 合并群组配置
-            if migrated_config["group_configs"]:
-                if "group_configs" not in self.config:
-                    self.config["group_configs"] = {}
-                for platform, groups in migrated_config["group_configs"].items():
-                    if platform not in self.config["group_configs"]:
-                        self.config["group_configs"][platform] = {}
-                    self.config["group_configs"][platform].update(groups)
+            # 合并白名单（从旧的多平台格式合并为简单列表）
+            if migrated_config.get("whitelist"):
+                current_whitelist = self.config.get("whitelist", [])
+                for platform_users in migrated_config["whitelist"].values():
+                    if isinstance(platform_users, list):
+                        current_whitelist.extend(platform_users)
+                self.config["whitelist"] = list(set(current_whitelist))  # 去重
 
     async def cog_unload(self):
         """插件卸载时清理资源"""
@@ -325,15 +301,14 @@ class LimitLimiter(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_blacklist_list")
     async def blacklist_list(self, event: AstrMessageEvent):
-        """查看黑名单（从配置文件读取）"""
-        platform = str(event.platform)
-        blacklist = self.config.get("blacklist", {}).get(platform, [])
+        """查看黑名单"""
+        blacklist = self.config.get("blacklist", [])
 
         if not blacklist:
             yield event.plain_result("📋 黑名单为空")
             return
 
-        result = f"📋 {platform} 平台黑名单列表\n━━━━━━━━━━━━━\n"
+        result = f"📋 黑名单列表（共 {len(blacklist)} 人）\n━━━━━━━━━━━━━\n"
         # 限制显示条数,避免消息过长
         max_display = 20
         for i, user_id in enumerate(blacklist[:max_display], 1):
@@ -350,14 +325,8 @@ class LimitLimiter(Star):
         """添加白名单（已迁移至配置文件）"""
         yield event.plain_result(
             "⚠️ 白名单已迁移至配置文件\n\n"
-            "请通过 AstrBot 管理界面编辑插件配置：\n"
-            "在 whitelist 中添加用户，格式如下：\n"
-            "```\n"
-            '"whitelist": {\n'
-            '  "qq": ["用户ID1", "用户ID2"]\n'
-            "}\n"
-            "```\n\n"
-            "白名单用户可无限制使用 AI 功能"
+            "请通过 AstrBot 管理界面编辑插件配置中的 whitelist 字段。\n\n"
+            "白名单用户可无限制使用 AI 功能。"
         )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -366,22 +335,20 @@ class LimitLimiter(Star):
         """移除白名单（已迁移至配置文件）"""
         yield event.plain_result(
             "⚠️ 白名单已迁移至配置文件\n\n"
-            "请通过 AstrBot 管理界面编辑插件配置：\n"
-            "从 whitelist 中删除对应用户ID即可"
+            "请通过 AstrBot 管理界面编辑插件配置中的 whitelist 字段。"
         )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("limit_whitelist_list")
     async def whitelist_list(self, event: AstrMessageEvent):
-        """查看白名单（从配置文件读取）"""
-        platform = str(event.platform)
-        whitelist = self.config.get("whitelist", {}).get(platform, [])
+        """查看白名单"""
+        whitelist = self.config.get("whitelist", [])
 
         if not whitelist:
             yield event.plain_result("📋 白名单为空")
             return
 
-        result = f"📋 {platform} 平台白名单列表\n━━━━━━━━━━━━━\n"
+        result = f"📋 白名单列表（共 {len(whitelist)} 人）\n━━━━━━━━━━━━━\n"
         # 限制显示条数,避免消息过长
         max_display = 20
         for i, user_id in enumerate(whitelist[:max_display], 1):

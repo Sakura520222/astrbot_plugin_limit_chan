@@ -1,5 +1,6 @@
 """配置管理器 - 从配置文件读取黑名单、白名单、用户/群组配置"""
 
+import json
 import logging
 from typing import Any
 
@@ -8,6 +9,35 @@ from astrbot.api import AstrBotConfig
 from ..database.connection import DatabaseConnection
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_json_config(value: Any, default: Any = None) -> Any:
+    """
+    解析配置中的 JSON 字符串
+    
+    Args:
+        value: 配置值（可能是字符串或字典）
+        default: 默认值
+        
+    Returns:
+        解析后的值
+    """
+    if value is None:
+        return default
+    
+    # 如果已经是字典/列表，直接返回
+    if isinstance(value, (dict, list)):
+        return value
+    
+    # 如果是字符串，尝试解析 JSON
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning(f"无法解析 JSON 配置: {value}")
+            return default
+    
+    return default
 
 
 class ConfigManager:
@@ -72,7 +102,7 @@ class ConfigManager:
 
         Args:
             user_id: 用户ID
-            platform: 平台
+            platform: 平台（暂未使用，保留用于未来扩展）
 
         Returns:
             是否在黑名单中
@@ -80,11 +110,8 @@ class ConfigManager:
         if not self.config:
             return False
 
-        blacklist = self.config.get("blacklist", {})
-        if not blacklist or platform not in blacklist:
-            return False
-
-        return user_id in blacklist[platform]
+        blacklist = self.config.get("blacklist", [])
+        return user_id in blacklist
 
     def is_whitelisted(self, user_id: str, platform: str) -> bool:
         """
@@ -92,7 +119,7 @@ class ConfigManager:
 
         Args:
             user_id: 用户ID
-            platform: 平台
+            platform: 平台（暂未使用，保留用于未来扩展）
 
         Returns:
             是否在白名单中
@@ -100,11 +127,8 @@ class ConfigManager:
         if not self.config:
             return False
 
-        whitelist = self.config.get("whitelist", {})
-        if not whitelist or platform not in whitelist:
-            return False
-
-        return user_id in whitelist[platform]
+        whitelist = self.config.get("whitelist", [])
+        return user_id in whitelist
 
     def get_user_config(self, user_id: str, platform: str) -> dict[str, Any] | None:
         """
@@ -120,7 +144,7 @@ class ConfigManager:
         if not self.config:
             return None
 
-        user_configs = self.config.get("user_configs", {})
+        user_configs = _parse_json_config(self.config.get("user_configs", {}), {})
         if not user_configs or platform not in user_configs:
             return None
 
@@ -140,7 +164,7 @@ class ConfigManager:
         if not self.config:
             return None
 
-        group_configs = self.config.get("group_configs", {})
+        group_configs = _parse_json_config(self.config.get("group_configs", {}), {})
         if not group_configs or platform not in group_configs:
             return None
 

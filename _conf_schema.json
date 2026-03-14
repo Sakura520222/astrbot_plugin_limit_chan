@@ -13,27 +13,15 @@
     "hint": "individual: 独立模式（每个用户独立计数）, shared: 共享模式（群组内共用计数）"
   },
   "blacklist": {
-    "description": "黑名单配置",
-    "type": "object",
-    "default": {},
-    "hint": "按平台配置黑名单用户，格式：{\"qq\": [\"用户ID1\", \"用户ID2\"]}"
+    "description": "黑名单用户ID列表",
+    "type": "list",
+    "default": [],
+    "hint": "被禁止使用 AI 功能的用户ID列表"
   },
   "whitelist": {
-    "description": "白名单配置",
-    "type": "object",
-    "default": {},
-    "hint": "按平台配置白名单用户，格式：{\"qq\": [\"用户ID1\", \"用户ID2\"]}"
-  },
-  "user_configs": {
-    "description": "用户特定配置",
-    "type": "object",
-    "default": {},
-    "hint": "按平台配置用户限制，格式：{\"qq\": {\"用户ID\": {\"daily_limit\": 10}}}"
-  },
-  "group_configs": {
-    "description": "群组特定配置",
-    "type": "object",
-    "default": {},
-    "hint": "按平台配置群组限制，格式：{\"qq\": {\"群组ID\": {\"daily_limit\": 30, \"mode\": \"shared\"}}}"
+    "description": "白名单用户ID列表",
+    "type": "list",
+    "default": [],
+    "hint": "可以无限制使用 AI 功能的用户ID列表（优先级高于黑名单）"
   }
 }

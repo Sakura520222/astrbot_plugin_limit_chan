@@ -55,22 +55,22 @@ class PermissionManager:
             (是否允许, 限制次数(-1为无限制), 模式, 配置来源)
         """
         # 1. 最高优先级：白名单检查（优先放行）
-        if await self.config_manager.is_whitelisted(user_id, platform):
+        if self.config_manager.is_whitelisted(user_id, platform):
             return True, -1, "individual", "whitelist"
 
         # 2. 次高优先级：黑名单检查（拦截）
-        if await self.config_manager.is_blacklisted(user_id, platform):
+        if self.config_manager.is_blacklisted(user_id, platform):
             return False, 0, "individual", "blacklist"
 
         # 3. 用户特定配置
-        user_config = await self.config_manager.get_user_config(user_id, platform)
+        user_config = self.config_manager.get_user_config(user_id, platform)
         if user_config and user_config.get("enabled"):
             limit = user_config["daily_limit"]
             return True, limit, "individual", f"user_config:{limit}"
 
         # 4. 群组特定配置
         if group_id:
-            group_config = await self.config_manager.get_group_config(
+            group_config = self.config_manager.get_group_config(
                 group_id, platform
             )
             if group_config and group_config.get("enabled"):
